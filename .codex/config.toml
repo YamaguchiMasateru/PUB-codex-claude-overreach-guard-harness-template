@@ -1,0 +1,63 @@
+## Codex が読むプロジェクト設定。各役割の詳細は対応する Skill に置く。
+## 凡例: 「## 」は説明、「# 」はコメントを外して使う設定行。
+## 設定例はすべて無効。選んだ行だけコメントを外すと Codex の動作が変わる。
+
+## 承認: on-request（必要時に承認）| never（承認なし）|
+## { granular = { ... } }（種類別）。詳細は .repository-docs/examples/codex-config.sample.toml。
+# approval_policy = "on-request"
+
+## サンドボックス: read-only（読み取り専用）| workspace-write（作業領域へ書き込み）|
+## danger-full-access（サンドボックスなし）。
+# sandbox_mode = "workspace-write"
+
+## 承認者: user（本人、既定）| auto_review（自動審査）。
+# approvals_reviewer = "auto_review"
+
+## Web 検索を無効化。コマンドの通信や Apps には適用されない。
+# web_search = "disabled"
+
+## 標準 shell ツールを無効化。ほかのツールや外部連携は対象外。
+# [features]
+# shell_tool = false
+
+## workspace-write 内のコマンド通信を無効化。Web 検索や Apps は対象外。
+# [sandbox_workspace_write]
+# network_access = false
+
+## Windows の sandbox 実装: elevated（推奨）| unelevated（代替）。
+## elevated が利用できない場合は unelevated を選ぶ。
+# [windows]
+# sandbox = "unelevated"
+
+## サブエージェント設定（有効。変更不可）
+
+[agents.investigate]
+description = "Investigate bugs, repository structure, and public sources needed for planning; report evidence."
+config_file = "../.agents/skills/delegate-investigate/agent.toml"
+
+[agents.implement]
+description = "Focused implementation of an assigned change."
+config_file = "../.agents/skills/delegate-implement/agent.toml"
+
+[agents.review]
+description = "Read-only review of user-visible correctness and regression risks."
+config_file = "../.agents/skills/delegate-review/agent.toml"
+
+[agents.verify]
+description = "Run configured checks and report evidence and remaining gaps."
+config_file = "../.agents/skills/delegate-verify/agent.toml"
+
+## Apps（接続先ごとに行が増える例）
+## ID とツール名を実際の値に置き換える。以下は別々の選択肢。
+## アプリ全体を無効化:
+# [apps."<app-id>"]
+# enabled = false
+## アプリ内の特定ツールを無効化:
+# [apps."<app-id>".tools."<tool-name>"]
+# enabled = false
+
+## MCP（サーバーごとに行が増える例）
+## 登録済みサーバーの ID と公開ツール名を実際の値に置き換える。
+## enabled_tools は、このサーバーから公開するツールの許可リスト。
+# [mcp_servers."<server-id>"]
+# enabled_tools = ["<tool-name>"]

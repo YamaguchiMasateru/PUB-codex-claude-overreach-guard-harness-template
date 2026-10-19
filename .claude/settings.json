@@ -1,0 +1,98 @@
+{
+  "permissions": {
+    "deny": [
+      "Read(**/.env)",
+      "Read(**/.env.*)"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash|ArtifactData|Artifact|ArtifactComments|NotebookEdit|Write|Edit|MultiEdit|PowerShell|Monitor|EnterWorktree|ExitWorktree|CronCreate|CronDelete|RemoteTrigger|DesignSync",
+        "hooks": [
+          {
+            "type": "command",
+            "shell": "bash",
+            "command": "root=\"$(git rev-parse --show-toplevel)\" && uv run --project \"$root\" --locked --no-sync --offline python -X utf8 \"$root/.claude/hooks/pretool_guard.py\"",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "PreCompact": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "shell": "bash",
+            "statusMessage": "圧縮前の履歴と状態を保存",
+            "command": "root=\"$(git rev-parse --show-toplevel)\" && uv run --project \"$root\" --locked --no-sync --offline python -X utf8 \"$root/.claude/hooks/compact_plus.py\" pre-compact",
+            "timeout": 180
+          }
+        ]
+      }
+    ],
+    "PostCompact": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "shell": "bash",
+            "command": "root=\"$(git rev-parse --show-toplevel)\" && uv run --project \"$root\" --locked --no-sync --offline python -X utf8 \"$root/.claude/hooks/compact_plus.py\" post-compact",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "matcher": "compact",
+        "hooks": [
+          {
+            "type": "command",
+            "shell": "bash",
+            "command": "root=\"$(git rev-parse --show-toplevel)\" && uv run --project \"$root\" --locked --no-sync --offline python -X utf8 \"$root/.claude/hooks/compact_plus.py\" session-start",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "shell": "bash",
+            "statusMessage": "サブエージェントの履歴参照先を記録",
+            "command": "root=\"$(git rev-parse --show-toplevel)\" && uv run --project \"$root\" --locked --no-sync --offline python -X utf8 \"$root/.claude/hooks/subagent_history.py\" subagent-stop",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "shell": "bash",
+            "command": "root=\"$(git rev-parse --show-toplevel)\" && uv run --project \"$root\" --locked --no-sync --offline python -X utf8 \"$root/.claude/hooks/compact_plus.py\" user-prompt-submit",
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "shell": "bash",
+            "statusMessage": "履歴の確認方法を案内",
+            "command": "root=\"$(git rev-parse --show-toplevel)\" && uv run --project \"$root\" --locked --no-sync --offline python -X utf8 \"$root/.claude/hooks/subagent_history.py\" user-prompt-submit",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}

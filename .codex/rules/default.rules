@@ -1,0 +1,23 @@
+# execpolicy はサンドボックス外でのコマンド実行要求を判定する。
+# shell 内部の全操作、Apps、MCP、Web 検索の制御には使わない。
+# 必要な例だけコメントを外し、コマンドの接頭辞を導入先に合わせる。
+# 判定例: codex execpolicy check --rules .codex/rules/default.rules -- git push origin main
+# 判定例: codex execpolicy check --rules .codex/rules/default.rules -- git push origin release
+
+# 実行前に毎回承認を求める例。
+# prefix_rule(
+#     pattern = ["git", "push"],
+#     decision = "prompt",
+#     justification = "リモートへの送信を確認する",
+#     match = ["git push origin main"],
+#     not_match = ["git status"],
+# )
+
+# 特定の接頭辞を持つコマンドを承認要求せず禁止する別例。
+# prefix_rule(
+#     pattern = ["git", "push", "origin", "release"],
+#     decision = "forbidden",
+#     justification = "release ブランチへの送信はチームの公開手順を使う",
+#     match = ["git push origin release"],
+#     not_match = ["git push origin main"],
+# )

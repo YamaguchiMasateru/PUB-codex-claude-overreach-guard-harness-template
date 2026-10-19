@@ -1,0 +1,78 @@
+# このファイルはリポジトリ内ハーネスのスクリプトが読みます。
+# Codex 本体の config.toml ではありません。
+
+[search]
+include = ["*.py", "*.md", "*.toml"]
+exclude_dirs = [".git", ".codex", ".venv", "uv.chash", ".harness-results", "__pycache__"]
+exclude_paths = [".repository-state/skills", ".repository-state/subagent-history", ".repository-state/compact-plus"]
+max_files = 20
+max_file_bytes = 1000000
+context_lines = 5
+max_output_chars = 4000
+
+[structure]
+markdown_dirs = [".repository-docs", ".repository-state/memory"]
+required_files = [
+  "AGENTS.md",
+  "README.md",
+  ".repository-docs/index.md",
+  ".repository-docs/architecture.md",
+  ".repository-docs/conventions.md",
+  ".repository-state/memory/index.md",
+  ".repository-state/memory/MEMORY.md",
+  ".agents/skills/repository-memory/SKILL.md",
+  ".repository-state/compact-plus/.gitignore",
+  ".repository-docs/operations/compact-plus.md",
+  ".repository-docs/operations/subagent-history.md",
+  ".repository-docs/operations/repository-knowledge.md",
+  ".repository-docs/operations/parallel-work.md",
+]
+skills = ["delegate-investigate", "delegate-implement", "delegate-review", "delegate-verify"]
+# 検査対象の実行環境。--env 省略時（CI 用）は全環境、--env <名前> は共通部分とその環境だけを検査する。
+environments = ["codex", "claude"]
+
+[structure.codex]
+required_files = [
+  ".codex/config.toml",
+  ".codex/hooks.json",
+  ".codex/hooks/subagent_history.py",
+  ".codex/hooks/compact_plus.py",
+]
+
+[structure.claude]
+required_files = [
+  "CLAUDE.md",
+  ".claude/settings.json",
+  ".claude/hooks/subagent_history.py",
+  ".claude/hooks/compact_plus.py",
+  ".claude/hooks/pretool_guard.py",
+  ".claude/hooks/guard_rules.json",
+  ".claude/skills/delegate-investigate/SKILL.md",
+  ".claude/skills/delegate-implement/SKILL.md",
+  ".claude/skills/delegate-review/SKILL.md",
+  ".claude/skills/delegate-verify/SKILL.md",
+  ".claude/skills/repository-memory/SKILL.md",
+]
+# .agents/skills/<名前>/SKILL.md の薄いラッパーを .claude/skills/ に置く Skill（name と description の一致を検査）
+wrapper_skills = ["delegate-investigate", "delegate-implement", "delegate-review", "delegate-verify", "repository-memory"]
+# disallowedTools に Write と Edit を必須とする役割
+read_only_roles = ["investigate", "review"]
+
+# 複数の実行環境が読む共通ファイルに、特定環境にしか通じない記述を置かないための補助検査。
+[structure.shared_content]
+files = [
+  "AGENTS.md",
+  ".agents/skills/delegate-*/SKILL.md",
+  ".agents/skills/delegate-*/references/agent-instructions.md",
+  ".agents/skills/repository-memory/SKILL.md",
+]
+forbidden = ["fork_turns", "agent.toml", ".codex/", "codex exec", "$delegate-"]
+
+[checks]
+timeout_seconds = 120
+max_output_chars = 4000
+log_dir = ".harness/.harness-results"
+
+[[checks.commands]]
+name = "unit-tests"
+argv = ["{python}", "-m", "unittest", "discover", "-s", ".harness/tests", "-v"]

@@ -1,0 +1,3 @@
+[agents.investigate]
+description = "Investigation role"
+config_file = "../.agents/skills/investigate/agent.toml"

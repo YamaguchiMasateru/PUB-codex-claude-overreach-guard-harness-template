@@ -1,0 +1,10 @@
+[project]
+name = "codex-overreach-guard-harness-template"
+version = "0.1.0"
+description = "Shared Codex harness template for repository workflows"
+readme = "README.md"
+requires-python = ">=3.14"
+dependencies = []
+
+[tool.uv]
+cache-dir = "./uv.chash"

@@ -1,0 +1,20 @@
+{
+  "_comment": "Bash の先頭トークン列の接頭辞で ask / deny を決める規則（.codex/rules/default.rules の prefix_rule に相当）。全役割とメインセッションに適用される。decision は prompt（確認）か forbidden（拒否）。match と not_match は自己検査用の例で、`python .claude/hooks/pretool_guard.py check-rules` と単体テストが確認する。_examples は適用されない。パターンはセキュリティ境界ではない。justification は Windows の Claude Code で文字化けするため英数字で書く。",
+  "rules": [],
+  "_examples": [
+    {
+      "pattern": ["git", "push"],
+      "decision": "prompt",
+      "justification": "Confirm before sending to the remote",
+      "match": ["git push origin main"],
+      "not_match": ["git status"]
+    },
+    {
+      "pattern": ["git", "push", "origin", "release"],
+      "decision": "forbidden",
+      "justification": "Use the team release procedure for the release branch",
+      "match": ["git push origin release"],
+      "not_match": ["git push origin main"]
+    }
+  ]
+}

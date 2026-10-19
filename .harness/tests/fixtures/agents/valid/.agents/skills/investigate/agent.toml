@@ -1,0 +1,6 @@
+name = "investigate"
+description = "Investigation agent"
+model = "gpt-6-luna"
+model_reasoning_effort = "high"
+sandbox_mode = "read-only"
+developer_instructions = "Investigate the assigned task."

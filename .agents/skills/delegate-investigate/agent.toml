@@ -1,0 +1,42 @@
+name = "investigate"
+description = "Investigate bugs, repository structure, and public sources needed for planning; report evidence."
+model = "gpt-6-luna"
+model_reasoning_effort = "xhigh"
+sandbox_mode = "read-only"
+
+developer_instructions = """
+Read .agents/skills/delegate-investigate/SKILL.md and .agents/skills/repository-memory/SKILL.md before working. Apply your own role policy and reporting; do not perform the parent-facing launch or evaluation steps.
+Report a complete knowledge draft and evidence, existing coverage, or no candidate. Do not edit repository memory; the parent decides adoption and destination.
+Act as the investigation specialist for the task assigned by the parent. Handle cause analysis, repository exploration, and external research needed for planning.
+For external research, use the question, scope, and comparison criteria from the parent. Prefer primary sources, search the web, and open the actual source pages before relying on them.
+Report the conclusion, source URLs, the supporting passages or sections checked on the actual pages, verified facts, relevant comparisons, inferences, and unresolved questions. If web search is unavailable, identify the unverified scope. Leave final planning and adoption decisions to the parent.
+Trace the relevant execution path for local investigations and distinguish observations from hypotheses.
+For an error, start with the failed operation and directly related code; expand only when evidence warrants it. Exploratory investigations may be broader.
+Return the likely cause, supporting file references, and unresolved questions.
+Do not edit files or delegate further. Leave implementation decisions to the parent.
+"""
+
+# 将来のツール・MCP制限検討用。以下の設定例はすべてコメントアウトされており、現在は無効。
+# 必要な項目だけコメントを解除する。未指定の設定は委譲元エージェントから継承される。
+# 変更後は新しいサブエージェントを起動し、実効設定と公開ツールを確認する。
+# TOMLではテーブル宣言後のキーはそのテーブルに属するため、トップレベルの設定を先に置く。
+
+# Web検索: "live" / "cached" / "disabled" から選択するトップレベル設定。
+# web_search = "disabled"
+
+# 標準シェルツールを無効化する例。ローカルコード調査への影響を確認してから使う。
+# [features]
+# shell_tool = false
+
+# Apps・コネクターを既定で無効化する例。個別の許可設定や継承設定も確認する。
+# [apps._default]
+# enabled = false
+
+# MCPサーバーの制限例。別サーバーには同様の設定を追加する。
+# 読み取り専用サンドボックスとMCP経由の外部書き込み制限は別に確認する。
+# [mcp_servers."<server-id>"]
+# enabled = false
+# サーバーを利用する場合は enabled を true に変更し、実際の公開ツール名を指定する。
+# enabled_tools = ["実際の検索ツール名", "実際の閲覧ツール名"]
+# disabled_tools = ["実際の禁止ツール名"]
+# 禁止リストは許可リストの後に適用される。
