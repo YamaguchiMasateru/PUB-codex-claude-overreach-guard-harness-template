@@ -66,6 +66,11 @@ class ClaudeCompactPlusTests(unittest.TestCase):
         env.start()
         self.addCleanup(env.stop)
         os.environ.pop('COMPACT_PLUS_ACTIVE', None)
+        # Many tests patch subprocess.run globally and count calls; keep git out of them.
+        self.real_git_branch = self.hook._git_branch
+        git_branch = mock.patch.object(self.hook, '_git_branch', return_value=None)
+        git_branch.start()
+        self.addCleanup(git_branch.stop)
 
     @staticmethod
     def message(text, role='user'):
@@ -137,6 +142,44 @@ class ClaudeCompactPlusTests(unittest.TestCase):
             self.event('pre-compact', {**self.payload, 'custom_instructions': 'keep API notes'})
         self.assertIn('keep API notes', backend.call_args.args[0])
         self.assertIn('"trigger": "manual"', backend.call_args.args[0])
+
+    def test_prompt_carries_git_branch(self):
+        with mock.patch.object(self.hook, '_git_branch', return_value='feature/x'):
+            self.assertIn('"git_branch": "feature/x"', self.precompact().args[0])
+        self.write_lines(self.message('second turn'), append=True)
+        self.assertIn('"git_branch": null', self.precompact().args[0])
+        self.assertEqual(set(self.checkpoint()['summary']), set(KEYS))
+
+    def test_git_branch_helper_reads_hook_repository_and_fails_open(self):
+        repo = self.temp_root / 'branch-repo'
+        subprocess.run(['git', 'init', '-q', str(repo)], check=True)
+        subprocess.run(['git', '-C', str(repo), 'symbolic-ref', 'HEAD', 'refs/heads/topic'], check=True)
+        with mock.patch.object(self.hook, 'ROOT', repo):
+            self.assertEqual(self.real_git_branch(), 'topic')
+            subprocess.run(['git', '-C', str(repo), 'symbolic-ref', 'HEAD', 'refs/heads/' + 'b' * 300],
+                           check=True)
+            self.assertEqual(self.real_git_branch(), 'b' * 200)
+            for error in (FileNotFoundError('git'), subprocess.TimeoutExpired('git', 5),
+                          UnicodeDecodeError('utf-8', b'\xff', 0, 1, 'bad')):
+                with self.subTest(error=type(error).__name__), \
+                     mock.patch.object(self.hook.subprocess, 'run', side_effect=error):
+                    self.assertIsNone(self.real_git_branch())
+        with mock.patch.object(self.hook, 'ROOT', self.temp_root / 'not-a-repo'):
+            self.assertIsNone(self.real_git_branch())
+
+    def test_git_branch_helper_reports_detached_head(self):
+        repo = self.temp_root / 'detached-repo'
+        subprocess.run(['git', 'init', '-q', str(repo)], check=True)
+        def force_remove(function, path, *_):
+            os.chmod(path, 0o700)  # git objects are read-only on Windows
+            function(path)
+        self.addCleanup(shutil.rmtree, repo, onerror=force_remove)
+        identity = ['-c', 'user.name=t', '-c', 'user.email=t@example.invalid']
+        subprocess.run(['git', '-C', str(repo), *identity, 'commit', '-q', '--allow-empty', '-m', 'x'],
+                       check=True)
+        subprocess.run(['git', '-C', str(repo), 'checkout', '-q', '--detach'], check=True)
+        with mock.patch.object(self.hook, 'ROOT', repo):
+            self.assertRegex(self.real_git_branch(), r'^detached at [0-9a-f]{4,}$')
 
     def test_transcript_squash_drops_noise_thinking_and_long_tool_output(self):
         long_output = 'x' * 3000
@@ -653,6 +696,43 @@ class ClaudeCompactPlusTests(unittest.TestCase):
                 self.assertEqual(result.stderr, b'')
                 self.assertEqual(json.loads(result.stdout), {})
         self.assertFalse((nested / '.repository-state').exists())
+
+    def test_configured_commands_ignore_cwd_in_foreign_git_repository(self):
+        """cwd が別の git リポジトリへ移っても、起動したプロジェクトのフックを使う（2026-10-20 の停止の再発防止）。"""
+        bash = git_bash()
+        if bash is None or shutil.which('uv') is None:
+            self.skipTest('Git Bash and uv required')
+        for name in ('pyproject.toml', 'uv.lock'):
+            shutil.copyfile(ROOT / name, self.root / name)
+        subprocess.run(['git', 'init', '-q', str(self.root)], check=True)
+        foreign = self.temp_root / 'foreign repo'
+        foreign.mkdir()
+        subprocess.run(['git', 'init', '-q', str(foreign)], check=True)
+        config = json.loads((ROOT / '.claude/settings.json').read_text(encoding='utf-8'))['hooks']
+        base = {**os.environ, 'UV_PROJECT_ENVIRONMENT': str(ROOT / '.venv')}
+        base.pop('COMPACT_PLUS_ACTIVE', None)
+        base.pop('CLAUDE_PROJECT_DIR', None)
+        project = {**base, 'CLAUDE_PROJECT_DIR': self.root.as_posix()}
+        payload = json.dumps({'session_id': 'foreign-cwd', 'hook_event_name': 'UserPromptSubmit',
+                              'transcript_path': str(self.temp_root / 'missing.jsonl')}).encode()
+        command = next(hook['command'] for group in config['UserPromptSubmit'] for hook in group['hooks']
+                       if 'compact_plus.py' in hook['command'])
+        self.assertIn('CLAUDE_PROJECT_DIR', command)
+        result = subprocess.run([bash, '-c', command], cwd=foreign, input=payload,
+                                capture_output=True, env=project, timeout=60)
+        self.assertEqual(result.returncode, 0, result.stderr.decode(errors='replace'))
+        self.assertEqual(json.loads(result.stdout), {})
+        self.assertFalse((foreign / '.repository-state').exists())
+        # 変更前の形（git rev-parse のみ）は、同じ状況で失敗する。テストが原因を捉えている確認。
+        old = command.replace('${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel)}', '$(git rev-parse --show-toplevel)')
+        self.assertNotEqual(old, command)
+        failed = subprocess.run([bash, '-c', old], cwd=foreign, input=payload,
+                                capture_output=True, env=project, timeout=60)
+        self.assertNotEqual(failed.returncode, 0)
+        # CLAUDE_PROJECT_DIR が無い環境では従来どおり cwd の git ルートを使う。
+        fallback = subprocess.run([bash, '-c', command], cwd=self.root, input=payload,
+                                  capture_output=True, env=base, timeout=60)
+        self.assertEqual(fallback.returncode, 0, fallback.stderr.decode(errors='replace'))
 
     def test_settings_register_compact_plus_before_history_hook(self):
         hooks = json.loads((ROOT / '.claude/settings.json').read_text(encoding='utf-8'))['hooks']

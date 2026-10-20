@@ -19,3 +19,5 @@
 - Claude の `.env` 読み取り拒否は有効だが、エラー文はディレクトリ単位の表現になる。文面だけで書式を再調査しない。[詳細](lessons/claude-env-deny-message.md)
 - `claude -p --json-schema` は `$schema` キーを拒否する。Codex 用スキーマを流用せず外す。[詳細](lessons/claude-p-json-schema.md)
 - Git Bash から `claude -p "/compact"` を渡すときは `MSYS_NO_PATHCONV=1` が要る。祖先探索の通しテストは入れ子の MSYS シェルでなくネイティブな親から行う。[詳細](lessons/windows-git-bash-claude-testing.md)
+- Hook のルートは `CLAUDE_PROJECT_DIR` で決める（`git rev-parse` だけだと、cd した別リポジトリを指して全 Hook が止まる）。別リポジトリは `cd` せず絶対パスか `git -C`。[詳細](lessons/hook-root-from-cwd.md)
+- ツールを制限した要約子には親Hookで取得したGit情報を明示入力し、対象repoと取得不能時の扱いを指定する。mockの成功は実LLM品質を証明しない。[詳細](lessons/compact-summary-repository-facts.md)

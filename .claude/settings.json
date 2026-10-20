@@ -13,7 +13,7 @@
           {
             "type": "command",
             "shell": "bash",
-            "command": "root=\"$(git rev-parse --show-toplevel)\" && uv run --project \"$root\" --locked --no-sync --offline python -X utf8 \"$root/.claude/hooks/pretool_guard.py\"",
+            "command": "root=\"${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel)}\" && uv run --project \"$root\" --locked --no-sync --offline python -X utf8 \"$root/.claude/hooks/pretool_guard.py\"",
             "timeout": 10
           }
         ]
@@ -26,7 +26,7 @@
             "type": "command",
             "shell": "bash",
             "statusMessage": "圧縮前の履歴と状態を保存",
-            "command": "root=\"$(git rev-parse --show-toplevel)\" && uv run --project \"$root\" --locked --no-sync --offline python -X utf8 \"$root/.claude/hooks/compact_plus.py\" pre-compact",
+            "command": "root=\"${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel)}\" && uv run --project \"$root\" --locked --no-sync --offline python -X utf8 \"$root/.claude/hooks/compact_plus.py\" pre-compact",
             "timeout": 180
           }
         ]
@@ -38,7 +38,7 @@
           {
             "type": "command",
             "shell": "bash",
-            "command": "root=\"$(git rev-parse --show-toplevel)\" && uv run --project \"$root\" --locked --no-sync --offline python -X utf8 \"$root/.claude/hooks/compact_plus.py\" post-compact",
+            "command": "root=\"${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel)}\" && uv run --project \"$root\" --locked --no-sync --offline python -X utf8 \"$root/.claude/hooks/compact_plus.py\" post-compact",
             "timeout": 5
           }
         ]
@@ -51,7 +51,7 @@
           {
             "type": "command",
             "shell": "bash",
-            "command": "root=\"$(git rev-parse --show-toplevel)\" && uv run --project \"$root\" --locked --no-sync --offline python -X utf8 \"$root/.claude/hooks/compact_plus.py\" session-start",
+            "command": "root=\"${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel)}\" && uv run --project \"$root\" --locked --no-sync --offline python -X utf8 \"$root/.claude/hooks/compact_plus.py\" session-start",
             "timeout": 5
           }
         ]
@@ -65,7 +65,7 @@
             "type": "command",
             "shell": "bash",
             "statusMessage": "サブエージェントの履歴参照先を記録",
-            "command": "root=\"$(git rev-parse --show-toplevel)\" && uv run --project \"$root\" --locked --no-sync --offline python -X utf8 \"$root/.claude/hooks/subagent_history.py\" subagent-stop",
+            "command": "root=\"${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel)}\" && uv run --project \"$root\" --locked --no-sync --offline python -X utf8 \"$root/.claude/hooks/subagent_history.py\" subagent-stop",
             "timeout": 10
           }
         ]
@@ -77,7 +77,7 @@
           {
             "type": "command",
             "shell": "bash",
-            "command": "root=\"$(git rev-parse --show-toplevel)\" && uv run --project \"$root\" --locked --no-sync --offline python -X utf8 \"$root/.claude/hooks/compact_plus.py\" user-prompt-submit",
+            "command": "root=\"${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel)}\" && uv run --project \"$root\" --locked --no-sync --offline python -X utf8 \"$root/.claude/hooks/compact_plus.py\" user-prompt-submit",
             "timeout": 5
           }
         ]
@@ -88,7 +88,7 @@
             "type": "command",
             "shell": "bash",
             "statusMessage": "履歴の確認方法を案内",
-            "command": "root=\"$(git rev-parse --show-toplevel)\" && uv run --project \"$root\" --locked --no-sync --offline python -X utf8 \"$root/.claude/hooks/subagent_history.py\" user-prompt-submit",
+            "command": "root=\"${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel)}\" && uv run --project \"$root\" --locked --no-sync --offline python -X utf8 \"$root/.claude/hooks/subagent_history.py\" user-prompt-submit",
             "timeout": 10
           }
         ]

@@ -154,6 +154,15 @@ class ClaudeHistoryTests(unittest.TestCase):
                 self.assertIn(session, out['hookSpecificOutput']['additionalContext'])
             else:
                 self.assertEqual(out, {})
+        # cwd が別の git リポジトリへ移っても、CLAUDE_PROJECT_DIR のプロジェクトのフックが動く。
+        foreign = Path(self.temp.name) / 'foreign repo'
+        foreign.mkdir()
+        subprocess.run(['git', 'init', '-q', str(foreign)], check=True)
+        moved = {**env, 'CLAUDE_PROJECT_DIR': space_root.as_posix()}
+        hook = next(h for g in hooks['UserPromptSubmit'] for h in g['hooks'] if 'subagent_history.py' in h['command'])
+        result = subprocess.run([bash, '-c', hook['command']], cwd=foreign, input=json.dumps({'session_id': session, 'prompt': 'SECRET'}).encode(), capture_output=True, env=moved)
+        self.assertEqual(result.returncode, 0, result.stderr.decode(errors='replace'))
+        self.assertIn(session, json.loads(result.stdout.decode('utf-8'))['hookSpecificOutput']['additionalContext'])
         files = list((space_root / RECORDS_PATH).glob('*.json'))
         self.assertEqual(len(files), 1)
         self.assertNotIn('SECRET', files[0].read_text(encoding='utf-8'))

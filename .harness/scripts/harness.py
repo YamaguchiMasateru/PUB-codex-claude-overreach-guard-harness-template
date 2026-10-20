@@ -505,6 +505,7 @@ def validate_agents(root: Path, skills: list[str], config_file: Path = CODEX_CON
 
 def validate_structure(root: Path, config: dict[str, Any], environments: list[str] | None = None) -> list[str]:
     """Validate shared structure plus the selected environments (all configured ones by default)."""
+    root = root.resolve()  # TEMP の 8.3 短縮名など、解決済みの子パスと比べられるようにそろえる
     problems: list[str] = []
     structure = config["structure"]
     selected = _environments(structure, environments)

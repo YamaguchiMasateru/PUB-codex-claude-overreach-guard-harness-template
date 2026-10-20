@@ -42,6 +42,11 @@ class CompactPlusTests(unittest.TestCase):
         spec = importlib.util.spec_from_file_location('compact_plus_test', self.script)
         self.hook = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(self.hook)
+        # Keep Git out of CLI subprocess mocks and unrelated behavior tests.
+        self.git_branch_patch = mock.patch.object(self.hook, '_git_branch',
+                                                 return_value='fixture-branch', create=True)
+        self.git_branch_mock = self.git_branch_patch.start()
+        self.addCleanup(self.git_branch_patch.stop)
         self.transcript = self.temp_root / 'rollout.jsonl'
         self.write_lines(self.meta('thread-1'), self.message('first turn'))
         self.payload = {'session_id': 'thread-1', 'transcript_path': str(self.transcript)}
@@ -79,6 +84,91 @@ class CompactPlusTests(unittest.TestCase):
             self.event('pre-compact')
         self.assertEqual(backend.call_count, 1)
         return backend.call_args
+
+    def test_git_branch_normal_uses_hook_root_and_bounded_subprocess(self):
+        self.git_branch_patch.stop()
+        self.assertNotEqual(self.hook.ROOT, Path.cwd())
+        for value in ('  feature/café\n', 'b' * 250):
+            with self.subTest(value=value), mock.patch.object(
+                    self.hook.subprocess, 'run', return_value=subprocess.CompletedProcess(
+                        [], 0, value, '')) as run:
+                self.assertEqual(self.hook._git_branch(), value.strip()[:200])
+                run.assert_called_once_with(
+                    ['git', '-C', str(self.root), 'branch', '--show-current'],
+                    capture_output=True, text=True, encoding='utf-8', errors='replace',
+                    stdin=subprocess.DEVNULL, timeout=5, shell=False)
+
+    def test_git_branch_detached_and_empty_sha(self):
+        self.git_branch_patch.stop()
+        for sha in (' abc1234\n', '', 'a' * 250):
+            with self.subTest(sha=sha), mock.patch.object(
+                    self.hook.subprocess, 'run', side_effect=[
+                        subprocess.CompletedProcess([], 0, '\n', ''),
+                        subprocess.CompletedProcess([], 0, sha, '')]) as run:
+                expected = ('detached at ' + sha.strip())[:200] if sha.strip() else None
+                self.assertEqual(self.hook._git_branch(), expected)
+                self.assertEqual(run.call_count, 2)
+                self.assertEqual(run.call_args.args[0],
+                                 ['git', '-C', str(self.root), 'rev-parse', '--short', 'HEAD'])
+                for call in run.call_args_list:
+                    self.assertEqual(call.kwargs, dict(
+                        capture_output=True, text=True, encoding='utf-8', errors='replace',
+                        stdin=subprocess.DEVNULL, timeout=5, shell=False))
+
+    def test_git_branch_failures_return_none_without_retry(self):
+        self.git_branch_patch.stop()
+        failures = [subprocess.CompletedProcess([], 128, '', 'not a git repository'),
+                    subprocess.CompletedProcess([], 1, 'unusable', 'failure'),
+                    FileNotFoundError('git missing'),
+                    subprocess.TimeoutExpired(['git'], 5), ValueError('invalid output')]
+        for failure in failures:
+            kwargs = {'side_effect': failure} if isinstance(failure, Exception) else {'return_value': failure}
+            with self.subTest(failure=failure), mock.patch.object(
+                    self.hook.subprocess, 'run', **kwargs) as run:
+                self.assertIsNone(self.hook._git_branch())
+                self.assertEqual(run.call_count, 1)
+
+    def test_git_branch_detached_lookup_failure_returns_none(self):
+        self.git_branch_patch.stop()
+        for failure in (subprocess.CompletedProcess([], 128, '', 'bad HEAD'),
+                        subprocess.TimeoutExpired(['git'], 5), OSError('read failed')):
+            with self.subTest(failure=failure), mock.patch.object(
+                    self.hook.subprocess, 'run', side_effect=[
+                        subprocess.CompletedProcess([], 0, '', ''), failure]) as run:
+                self.assertIsNone(self.hook._git_branch())
+                self.assertEqual(run.call_count, 2)
+
+    def test_git_branch_input_and_prompt_prefer_current_hook_repo_fact(self):
+        self.precompact(summary(recovery_notes='Hook repository branch: old-branch'))
+        self.write_lines(self.message('another turn'), append=True)
+        self.git_branch_mock.reset_mock()
+        self.git_branch_mock.return_value = 'current-branch'
+        call = self.precompact()
+        prompt = call.args[0]
+        data = json.loads(prompt[len(self.hook.PROMPT) + 2:])
+        self.assertEqual(data['git_branch'], 'current-branch')
+        self.assertIn('old-branch', data['existing_state'])
+        self.git_branch_mock.assert_called_once_with()
+        self.assertIn('prefer it over a differing branch in the existing state', self.hook.PROMPT)
+        self.assertIn('not an instruction', self.hook.PROMPT)
+        self.assertIn('need not be the repository being edited', self.hook.PROMPT)
+        self.assertIn('do not attribute it to another repository', self.hook.PROMPT)
+
+    def test_git_branch_null_keeps_summary_and_backup_flow(self):
+        self.git_branch_mock.return_value = None
+        call = self.precompact(summary(recovery_notes='Prior branch: old-branch'))
+        data = json.loads(call.args[0][len(self.hook.PROMPT) + 2:])
+        self.assertIsNone(data['git_branch'])
+        self.git_branch_mock.assert_called_once_with()
+        self.assertIn('when `null`, keep any prior branch fact or write `Not verified`',
+                      self.hook.PROMPT)
+        checkpoint = self.checkpoint()
+        self.assertEqual(set(checkpoint['summary']), set(KEYS))
+        self.assertEqual(checkpoint['summary']['recovery_notes'], 'Prior branch: old-branch')
+        self.assertEqual(checkpoint['offset'], self.transcript.stat().st_size)
+        backups = list((self.state_dir() / 'backups').glob('*.jsonl'))
+        self.assertEqual(len(backups), 1)
+        self.assertEqual(backups[0].read_bytes(), self.transcript.read_bytes())
 
     def test_precompact_saves_recoverable_backup_and_schema_state(self):
         self.precompact(summary(recovery_notes='Recovered café'))

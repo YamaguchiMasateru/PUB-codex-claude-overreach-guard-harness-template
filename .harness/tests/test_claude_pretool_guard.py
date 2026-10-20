@@ -278,6 +278,15 @@ class ProcessTests(unittest.TestCase):
                 self.assertEqual(result.returncode, 0, result.stderr.decode(errors='replace'))
                 stdout = result.stdout.decode('utf-8').strip()
                 self.assertEqual(decision(json.loads(stdout)) if stdout else None, expected, command)
+            # cwd が別の git リポジトリへ移っても、CLAUDE_PROJECT_DIR のプロジェクトのフックが動く。
+            foreign = Path(temp) / 'foreign repo'
+            foreign.mkdir()
+            subprocess.run(['git', 'init', '-q', str(foreign)], check=True)
+            moved = {**env, 'CLAUDE_PROJECT_DIR': space_root.as_posix()}
+            payload = json.dumps(bash_event('echo hi > x.txt', 'investigate')).encode()
+            result = subprocess.run([bash, '-c', hook['command']], cwd=foreign, input=payload, capture_output=True, env=moved)
+            self.assertEqual(result.returncode, 0, result.stderr.decode(errors='replace'))
+            self.assertEqual(decision(json.loads(result.stdout.decode('utf-8'))), 'deny')
 
 
 if __name__ == '__main__':

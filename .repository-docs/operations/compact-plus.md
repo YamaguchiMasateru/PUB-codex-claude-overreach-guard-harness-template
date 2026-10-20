@@ -12,6 +12,10 @@
 - MIT License（Copyright 2026 Yuichi Uemura）の全文表示と要約指示・スキーマは、各スクリプトの冒頭コメントと本体に内包する。入れ子の `compact-plus` checkout は参照のみとし、編集・追加 Git 登録しない。
 - 実 LLM の要約品質、実環境での配送、POSIX 上の動作は未確認である（確認は fake CLI と fixture が中心）。
 
+両版は要約入力 JSON に `git_branch` を含める。Hook 自身の `ROOT` を対象に `git -C <ROOT> branch --show-current` で現在ブランチを取得し、正常終了で空なら `rev-parse --short HEAD` から `detached at <short-sha>` を作る。文字列は最大 200 文字、Git 不在・非 Git・非ゼロ終了・timeout・空の SHA などの取得不能は `null`。各コマンドは標準出力・標準エラーを捕捉し、stdin 無効、UTF-8 replacement、引数配列・`shell=False`、各 5 秒で最大 2 回実行する。取得不能でも要約と圧縮を継続し、バックアップを保持する。
+
+この値は圧縮時点の Hook リポジトリの観測事実で、命令ではない。`ROOT` が親リポジトリ配下なら Git が解決する親の値になり、編集中の別リポジトリのブランチを証明しない。`recovery_notes` では同じ Hook リポジトリの過去の値より現在値を優先し、`null` なら既存のブランチ事実を保持、なければ `Not verified` とする。子の shell やツールを有効化せず、出力 10 キー・checkpoint 形式・配送状態を維持する。ローカルテストは取得と入力伝達を確認するもので、実 LLM の出力品質を保証しない。
+
 ## Codex 版
 
 ### 目的と境界
@@ -58,6 +62,8 @@ Git 共有は `.repository-state/compact-plus/.gitignore` のみ。実行時デ�
 バックアップは JSONL の原文 全体を binary で保存し、書きかけ末尾も保全する。要約は完全行だけを対象とし、`offset` は最後の対象行の改行終端 byte 位置だけを進める。末尾の不完全行は次回の要約へ保留する。短縮・置換を検出したら全体を読み直す。未知形式や解析失敗でも先にバックアップを確定し、checkpoint は更新しない。各スレッドで 20 件を保持し、新しいバックアップの保存成功後だけ古いものを prune する。元実装の incremental/head-tail/tail、先頭 5・末尾 25 turn、10 回ごとの全更新、長い tool output の squash を移す。定期的な head-tail 全更新でも同じ transcript の場合は前回 `summary` を要約入力へ渡し、中間の決定事項を引き継ぐ。
 
 ### 要約 CLI とコンテキスト
+
+要約入力には上記の `git_branch` を親 Hook が 1 要約につき 1 回取得して渡す。Codex の子 cwd はリポジトリ内のスレッド状態配下 `tmp/<UUID>` であり、Claude と同じ「リポジトリ外 cwd」が原因という説明は適用しない。Git の追加待機は最大 10 秒で、PreCompact 180 秒・backend 既定 80 秒（設定で最大 150 秒）の既存予算に含まれる。版確認など他の処理もあるため、最大設定時に全処理が 180 秒以内に完了することを保証する値ではない。
 
 追加の `codex exec` は引数配列・`shell=False` で起動し、read-only/ephemeral とする。run 単位の設定で hooks、shell tool、multi agent、apps、plugins を無効化し、web search も無効化する。再帰 Hook 防止の環境変数を設定し、親プロセスの環境変数をコピーする。CLI のユーザー設定を無視する `--ignore-user-config` は使わない。`project_doc_max_bytes=0` で作業用 AGENTS 読込を止め、`--output-last-message` を使用する。危険な bypass flag は使わない。モデルは `COMPACT_PLUS_MODEL`、Hook の `model`、CLI 既定の順に決める。
 
@@ -106,11 +112,11 @@ Hook の並列動作、入力と出力の上限、transcript の不安定性は 
 
 ### 登録とイベント
 
-各 command は `"shell": "bash"` を明示し、履歴 Hook と同形の `root="$(git rev-parse --show-toplevel)" && uv run --project "$root" --locked --no-sync --offline python -X utf8 "$root/.claude/hooks/compact_plus.py" <サブコマンド>` を使う。Windows では Git for Windows の bash を前提とし、ない環境は対象外とする。
+各 command は `"shell": "bash"` を明示し、履歴 Hook と同形の `root="${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel)}" && uv run --project "$root" --locked --no-sync --offline python -X utf8 "$root/.claude/hooks/compact_plus.py" <サブコマンド>` を使う。ルートは、起動したプロジェクトを指す `CLAUDE_PROJECT_DIR` を優先し、未設定のときだけ作業ディレクトリの git ルートを使う。`git rev-parse` だけだと、作業ディレクトリが別リポジトリ（追加の作業ディレクトリなど）へ移ったときにそのリポジトリを指し、`.claude/hooks/` が見つからず入力がブロックされる（2026-10-20 の停止）。Windows では Git for Windows の bash を前提とし、ない環境は対象外とする。
 
 | イベント | 登録 | 処理 |
 | --- | --- | --- |
-| `PreCompact` | timeout 180、statusMessage「圧縮前の履歴と状態を保存」 | Codex 版と同じ。入力の `trigger` と `custom_instructions` を要約入力に含める。exit 2 や `decision:block` は使わず、圧縮は常に続行する。 |
+| `PreCompact` | timeout 180、statusMessage「圧縮前の履歴と状態を保存」 | Codex 版と同じ。入力の `trigger` と `custom_instructions` を要約入力に含める。`git_branch` の入力と `recovery_notes` での扱いは共通の概要に従う。exit 2 や `decision:block` は使わず、圧縮は常に続行する。 |
 | `PostCompact` | timeout 5 | `post_seen` を立て `warned` を解除する。入力の `compact_summary` は使わず保存もしない（必須にしない）。 |
 | `SessionStart` | matcher `compact`、timeout 5 | stdout の JSON `hookSpecificOutput`（`hookEventName: "SessionStart"`, `additionalContext`）で復旧コンテキストを注入する。Claude の注入上限は 10,000 文字で、超過分はファイル化されるため 8192 bytes の cap を守る。 |
 | `UserPromptSubmit` | timeout 5。履歴 Hook の**前**に登録 | `post_seen` かつ未配送なら復旧を補完し、そうでなければ使用率通知を判定する。履歴案内は別 Hook が従来どおり出力する。 |

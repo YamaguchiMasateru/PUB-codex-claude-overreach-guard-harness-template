@@ -22,7 +22,7 @@ Claude Code 用には、サブエージェント履歴の Hook（`.claude/hooks/
 - 実行環境: Codex CLI または Claude Code。導入する環境のぶんだけ用意すれば足ります。
 - `uv`: 仮想環境の作成とコマンド実行に使います。
 - Python 3.14 以上: `pyproject.toml` の `requires-python` が `>=3.14` です。未導入なら `uv python install 3.14` を実行してください。
-- `git`: Claude Code の Hook が `git rev-parse --show-toplevel` でリポジトリのルートを求めます。
+- `git`: Claude Code の Hook は `CLAUDE_PROJECT_DIR` をルートとして使い、未設定のときだけ `git rev-parse --show-toplevel` で求めます。
 - Git for Windows（Git Bash）: Windows で Claude Code を使う場合に必要です。Claude の Hook 設定は `"shell": "bash"` を明示しており、Git Bash がない環境では Hook が失敗します。
 - Codex CLI または `claude`: compact-plus が要約のために起動します。Codex 版は追加の `codex exec` を使うため Codex CLI が必要で、Claude Code 版は親と同じ `claude` を使います。
 - ネットワーク: 初回の `uv sync` だけ通信が必要です。以降のコマンド例は `--offline` で動きます。

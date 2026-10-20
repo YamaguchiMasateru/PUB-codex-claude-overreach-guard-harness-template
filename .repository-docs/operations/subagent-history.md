@@ -53,6 +53,7 @@ uv run --project . --locked --no-sync --offline python -X utf8 .claude/hooks/sub
 ### Claude の確認状況
 
 - 確認済み（2026-10-18、Windows、`claude -p`、claude.exe v2.1.301）: `"shell": "bash"` は Git Bash で起動する。`git rev-parse --show-toplevel` は `C:/...` 形式で、空白を含むパスも二重引用符で扱える。`uv` は PATH で解決でき、`uv run --project "$root" --locked --no-sync --offline python -X utf8 ...` が成功する。`hookSpecificOutput.additionalContext` はモデルに届き、`systemMessage` は通知として出る。
-- 自動テスト: `.harness/tests/test_claude_subagent_history.py` が、設定の実 `command` を bash でサブディレクトリ・空白入りパスの一時リポジトリから実行し、記録、秘密情報の非保存、並列書込み、巨大行、BOM、不正入力、`list`/`show` を確認する。bash・uv・git がない環境ではこの 1 件だけ skip する。`harness.py` の `--env claude` 検査が、Hook の登録、`"shell": "bash"`、参照する実行ファイルの存在を確認する。
+- 確認済み（2026-10-20、Windows、`claude -p`、ハーネス開発元での観測）: Hook の環境で `CLAUDE_PROJECT_DIR` は `C:/Users/.../<project>` 形式で渡される。全 Hook の `root` はこれを優先し、未設定のときだけ `git rev-parse --show-toplevel` を使う。作業ディレクトリが別リポジトリへ移った状態でも、テストで本リポジトリの Hook が起動する。
+- 自動テスト: `.harness/tests/test_claude_subagent_history.py` が、設定の実 `command` を bash でサブディレクトリ・空白入りパスの一時リポジトリと、別の git リポジトリを作業ディレクトリにした状態から実行し、記録、秘密情報の非保存、並列書込み、巨大行、BOM、不正入力、`list`/`show` を確認する。bash・uv・git がない環境ではこの 1 件だけ skip する。`harness.py` の `--env claude` 検査が、Hook の登録、`"shell": "bash"`、参照する実行ファイルの存在を確認する。
 - 実機確認（2026-10-19）: 手動 `/compact` の直後に、`agent_type` が空で transcript が存在しない（`transcript_status=missing`）記録が 1 件残った。内部エージェントの `SubagentStop` は `agent_type` が空で届くため、未設定として扱う実装で記録できている。
 - 未確認: 内部エージェントごとの `agent_type` の種類、`SubagentStop` の `systemMessage` の表示先、並列起動時の記録。
