@@ -8,6 +8,8 @@
 - [外部リソース](../external/README.md): 登録簿とローカル確認、導入・撤去への入口
 - [conventions.md](conventions.md): 設定・検索・検査・知識の運用規約
 - `examples/` はユーザーが必要に応じて参考資料を保存する場所です。
+- [Spec Kit 利用ガイド](examples/spec-kit-guide.md): 導入済み Python 版の利用と変更確認の参考手順
+- [Claude Spec Kit ラッパー設計](examples/claude-speckit-wrapper-design.md): 任意ツールの正本参照、引数受渡しと確認範囲
 - [examples/claude-settings.sample.md](examples/claude-settings.sample.md): Claude Code の権限設定の参考例です。初期有効の設定の正本は `../.claude/settings.json` です。
 - [examples/codex-config.sample.toml](examples/codex-config.sample.toml): Codex の設定項目を調べるときの参考例です。このリポジトリの Codex 設定の正本は `../.codex/config.toml`、ハーネス設定の正本は `../.harness/config/harness.toml` です。
 

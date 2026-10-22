@@ -1,7 +1,7 @@
 # 運用規約
 
 - 検索・検査の設定値は `.harness/config/harness.toml` に置く。役割の責務・範囲・報告は共通の Skill（`.agents/skills/delegate-<役割>/SKILL.md`）、起動手順は実行環境別の `references/launch-<環境>.md`、役割の登録と実行時設定は環境別の設定（Codex は `.codex/config.toml` と Skill の `agent.toml`、Claude Code は `.claude/agents/`）に置く。共通の文書・Skill 本文には、どちらか一方の環境にしか通じない記述を置かない。
-- `.claude/skills/<名前>/SKILL.md` は `.agents/skills/<名前>/SKILL.md` の薄いラッパーである。正本の `name` または `description` を変更するときは、同じ変更でラッパーも同時に直す（ずれると `harness.py` の検査が失敗する）。ラッパーに手順は書かない。
+- ハーネスの Claude Skill ラッパーは `.harness/config/harness.toml` の `wrapper_skills` が定める4つの `delegate-*` と `repository-memory` を対象とする。`.claude/skills/<名前>/SKILL.md` は `.agents/skills/<名前>/SKILL.md` の薄いラッパーであり、正本の `name` または `description` を変更するときは引用符を含めて同時に同期する。本文は正本への相対リンクと Read 指示だけとし、実行手順は共通 Skill に置く。`harness.py` がこの登録対象を検査する。
 - 実装・レビュー・検証の依頼では、規模にかかわらず対応する役割のサブエージェントを起動する。調査は `delegate-investigate` の基準に従い、複数ファイル・複数コマンドにまたがる調査と外部アクセスを伴う調査ではサブエージェントを起動し、軽微な調査は親が直接行ってよい。ユーザーが親の直接処理を明示した場合、または起動ツール・該当役割が使えない場合だけ親が処理し、後者は理由を報告する。親は委任範囲を明示して結果を統合し、同じファイルを複数の実装エージェントへ同時に割り当てない。
 - 検索は候補の一覧から始め、必要なファイルの必要な行だけを表示する。出力上限に達したら語句を絞って再検索する。
 - `validate` は構造と参照を、`check` は設定済みコマンドの結果まで確認する。失敗時は要約を見てから保存された生出力を開く。

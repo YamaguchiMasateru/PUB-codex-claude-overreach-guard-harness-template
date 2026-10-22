@@ -24,7 +24,7 @@ Skill 名は `delegate-<役割>`、役割名は `investigate`、`implement`、`r
 
 ## Claude Code 固有
 
-`CLAUDE.md` が `AGENTS.md` を import します。役割定義は `.claude/agents/<役割>.md`（モデル、`effort`、`disallowedTools`。現在のモデルと `effort` は仮設定）に置き、本文は共通 SKILL.md を読む指示だけです。Claude Code は `.agents/skills/` を Skill として探索しないため、`.claude/skills/<名前>/SKILL.md` に薄いラッパーを置きます（対象は 4 役割の Skill と `repository-memory`）。ラッパーは正本と完全一致する `name` と `description`、正本への相対リンク、Read 指示だけを持ち、手順は書きません。symlink は Windows の Git が実体化できない場合があるため使いません。`harness.py` が `name`・`description` の一致、正本の存在、リンク、本文の短さを検査します。`.claude/settings.json` は権限設定で、初期有効は `.env` 系の読み取り禁止と `external/repos` の編集拒否です。サブエージェントは親の会話履歴を引き継がず、渡した指示文だけが入力になります。親の permission mode が `bypassPermissions`、`acceptEdits`、`auto` のときは役割側の `permissionMode` は無視されます。
+`CLAUDE.md` が `AGENTS.md` を import します。役割定義は `.claude/agents/<役割>.md`（モデル、`effort`、`disallowedTools`。現在のモデルと `effort` は仮設定）に置き、本文は共通 SKILL.md を読む指示だけです。Claude Code は `.agents/skills/` を Skill として探索しないため、`.claude/skills/<名前>/SKILL.md` に薄いラッパーを置きます（ハーネスの対象は `.harness/config/harness.toml` が定める4役割の Skill と `repository-memory`）。ラッパーは正本と一致する `name` と `description`、正本への相対リンク、Read 指示だけを持ち、手順は書きません。symlink は Windows の Git が実体化できない場合があるため使いません。`harness.py` は登録対象の `name`・`description` の一致、正本の存在、リンク、本文の短さを検査します。`.claude/settings.json` は権限設定で、初期有効は `.env` 系の読み取り禁止と `external/repos` の編集拒否です。サブエージェントは親の会話履歴を引き継がず、渡した指示文だけが入力になります。親の permission mode が `bypassPermissions`、`acceptEdits`、`auto` のときは役割側の `permissionMode` は無視されます。
 
 ## 共通の設定と検査
 
