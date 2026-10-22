@@ -16,5 +16,7 @@
 - [Claude Code の .env 読み取り拒否はエラー文がディレクトリ単位の表現になる](lessons/claude-env-deny-message.md)
 - [claude -p の --json-schema は $schema を拒否する](lessons/claude-p-json-schema.md)
 - [Windows の Git Bash から Claude Code 配下の Hook を試すときの落とし穴](lessons/windows-git-bash-claude-testing.md)
-- [Hook のルートを作業ディレクトリから求めると、別リポジトリへ移った瞬間に全 Hook が止まる](lessons/hook-root-from-cwd.md)
+- [Hook のrootと操作cwdを分ける（Windows短縮表記、Codexの起動rootと実機未確認を含む）](lessons/hook-root-from-cwd.md)
+- [登録先のGit到達性は親リポジトリのHEADで判定しない](lessons/external-git-root.md)
+- [読取り系コマンドも出力先の文法に沿って書込みを判定する](lessons/shell-guard-output-destinations.md)
 - [要約子へ再開用リポジトリ情報を明示入力する](lessons/compact-summary-repository-facts.md)

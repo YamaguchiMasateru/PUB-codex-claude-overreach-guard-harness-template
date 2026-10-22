@@ -4,7 +4,7 @@
 [search]
 include = ["*.py", "*.md", "*.toml"]
 exclude_dirs = [".git", ".codex", ".venv", "uv.chash", ".harness-results", "__pycache__"]
-exclude_paths = [".repository-state/skills", ".repository-state/subagent-history", ".repository-state/compact-plus"]
+exclude_paths = [".repository-state/skills", ".repository-state/subagent-history", ".repository-state/compact-plus", "external/repos"]
 max_files = 20
 max_file_bytes = 1000000
 context_lines = 5
@@ -15,6 +15,10 @@ markdown_dirs = [".repository-docs", ".repository-state/memory"]
 required_files = [
   "AGENTS.md",
   "README.md",
+  "external/README.md",
+  "external/local-setup.md",
+  "external/registry.json",
+  "external/check_external.py",
   ".repository-docs/index.md",
   ".repository-docs/architecture.md",
   ".repository-docs/conventions.md",
@@ -37,6 +41,8 @@ required_files = [
   ".codex/hooks.json",
   ".codex/hooks/subagent_history.py",
   ".codex/hooks/compact_plus.py",
+  ".codex/hooks/pretool_guard.py",
+  ".codex/hooks/guard_rules.json",
 ]
 
 [structure.claude]
@@ -69,7 +75,7 @@ files = [
 forbidden = ["fork_turns", "agent.toml", ".codex/", "codex exec", "$delegate-"]
 
 [checks]
-timeout_seconds = 120
+timeout_seconds = 300
 max_output_chars = 4000
 log_dir = ".harness/.harness-results"
 

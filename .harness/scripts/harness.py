@@ -6,6 +6,7 @@ import argparse
 import ast
 from datetime import datetime, timezone
 import json
+import importlib.util
 import re
 import subprocess
 import sys
@@ -503,6 +504,91 @@ def validate_agents(root: Path, skills: list[str], config_file: Path = CODEX_CON
     return problems
 
 
+def validate_external_registry(root: Path) -> list[str]:
+    """Validate the registry schema only; never inspect external repositories."""
+    registry = root / "external/registry.json"
+    if not registry.exists():
+        return []  # Required-file configuration handles absence when enabled.
+    try:
+        value = json.loads(registry.read_text(encoding="utf-8-sig"))
+    except (OSError, ValueError):
+        return ["external/registry.json: invalid or unreadable JSON"]
+    validator = Path(__file__).resolve().parents[2] / "external/check_external.py"
+    if not validator.is_file():
+        return ["external/check_external.py: registry validator is missing"]
+    spec = importlib.util.spec_from_file_location("external_registry_validator", validator)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return [f"external/registry.json: {error}" for error in module.validate(value)]
+
+
+def validate_external_guard(root: Path, environment: str) -> list[str]:
+    """Check static registration and rules, without executing either guard."""
+    prefix = f".{environment}"
+    label = f"{environment} external guard"
+    problems: list[str] = []
+    for relative in (f"{prefix}/hooks/pretool_guard.py", f"{prefix}/hooks/guard_rules.json"):
+        if not (root / relative).is_file():
+            problems.append(f"{label}: missing {relative}")
+    try:
+        rules = json.loads((root / prefix / "hooks/guard_rules.json").read_text(encoding="utf-8-sig"))
+        if not isinstance(rules, dict):
+            raise ValueError
+        paths = rules.get("protected_paths")
+        if not isinstance(paths, list) or "external/repos" not in paths:
+            raise ValueError
+        for path in paths:
+            if not isinstance(path, str) or not path or path.startswith(("/", "\\")) or ":" in path or any(part in ("", ".", "..") for part in path.replace("\\", "/").split("/")):
+                raise ValueError
+        if environment == "claude":
+            entries = rules.get("rules")
+            if not isinstance(entries, list):
+                raise ValueError
+            for entry in entries:
+                if not isinstance(entry, dict) or entry.get("decision") not in ("prompt", "forbidden"):
+                    raise ValueError
+                pattern = entry.get("pattern")
+                if not isinstance(pattern, list) or not pattern or any(not (isinstance(part, str) or isinstance(part, list) and part and all(isinstance(token, str) for token in part)) for part in pattern):
+                    raise ValueError
+    except (OSError, ValueError, TypeError):
+        problems.append(f"{label}: invalid guard_rules.json / protected_paths")
+    settings_path = root / prefix / ("hooks.json" if environment == "codex" else "settings.json")
+    try:
+        settings = json.loads(settings_path.read_text(encoding="utf-8-sig"))
+        if not isinstance(settings, dict):
+            raise ValueError
+    except (OSError, ValueError):
+        return problems + [f"{label}: invalid hook settings"]
+    if environment == "claude":
+        permissions = settings.get("permissions")
+        deny = permissions.get("deny") if isinstance(permissions, dict) else None
+        if not isinstance(deny, list) or "Edit(/external/repos/**)" not in deny:
+            problems.append(f"{label}: missing Edit(/external/repos/**) deny")
+    hooks = settings.get("hooks")
+    matching: list[tuple[dict, dict]] = []
+    for group in _claude_hook_groups(hooks if isinstance(hooks, dict) else {}, "PreToolUse"):
+        inner = group.get("hooks")
+        for item in inner if isinstance(inner, list) else []:
+            if isinstance(item, dict) and any("pretool_guard.py" in str(item.get(key, "")) for key in ("command", "commandWindows")):
+                matching.append((group, item))
+    if len(matching) != 1:
+        return problems + [f"{label}: expected one PreToolUse guard registration"]
+    group, item = matching[0]
+    matcher = group.get("matcher")
+    tools = set(matcher.split("|")) if isinstance(matcher, str) else set()
+    required = {"Bash", "apply_patch"} if environment == "codex" else {"Bash", "PowerShell"}
+    if not required <= tools:
+        problems.append(f"{label}: incorrect PreToolUse matcher")
+    if item.get("type") != "command" or item.get("async", False) is not False or item.get("asyncRewake", False) is not False or type(item.get("timeout")) is not int or item["timeout"] != 10:
+        problems.append(f"{label}: expected synchronous command with timeout 10")
+    for key in (("command", "commandWindows") if environment == "codex" else ("command",)):
+        command = item.get(key)
+        pattern = re.escape(f"{prefix}/hooks/pretool_guard.py") + r'''(?=['"\s)]|$)'''
+        if not isinstance(command, str) or not re.search(pattern, command) or not re.search(r"\bpython\b", command):
+            problems.append(f"{label}: {key} must launch {prefix}/hooks/pretool_guard.py")
+    return problems
+
+
 def validate_structure(root: Path, config: dict[str, Any], environments: list[str] | None = None) -> list[str]:
     """Validate shared structure plus the selected environments (all configured ones by default)."""
     root = root.resolve()  # TEMP の 8.3 短縮名など、解決済みの子パスと比べられるようにそろえる
@@ -547,6 +633,10 @@ def validate_structure(root: Path, config: dict[str, Any], environments: list[st
             problems.extend(validate_claude(root, structure))
         problems.extend(validate_environment_files(root, structure, selected))
     problems.extend(validate_shared_content(root, structure))
+    problems.extend(validate_external_registry(root))
+    for environment in selected:
+        if environment in ("codex", "claude"):
+            problems.extend(validate_external_guard(root, environment))
 
     for path in _markdown_files(root, config):
         if not path.is_file():

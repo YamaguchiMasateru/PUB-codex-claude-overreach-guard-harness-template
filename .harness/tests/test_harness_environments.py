@@ -43,9 +43,9 @@ COMPACT_COMMAND = HOOK_COMMAND.replace("subagent_history.py", "compact_plus.py")
 GUARD_COMMAND = HOOK_COMMAND.replace("subagent_history.py", "pretool_guard.py").replace(" {}", "")
 GUARD_SOURCE = 'READ_ONLY_ROLES = ("investigate",)\nWATCHED_TOOLS = ("Bash", "Write")\n'
 SETTINGS = {
-    "permissions": {"deny": ["Read(**/.env)"]},
+    "permissions": {"deny": ["Read(**/.env)", "Edit(/external/repos/**)"]},
     "hooks": {
-        "PreToolUse": [{"matcher": "Bash|Write", **_hook(GUARD_COMMAND)}],
+        "PreToolUse": [{"matcher": "Bash|Write|PowerShell", "hooks": [{"type": "command", "command": GUARD_COMMAND, "shell": "bash", "timeout": 10}]}],
         "PreCompact": [_hook(COMPACT_COMMAND.format("pre-compact"))],
         "PostCompact": [_hook(COMPACT_COMMAND.format("post-compact"))],
         "SessionStart": [{"matcher": "compact", **_hook(COMPACT_COMMAND.format("session-start"))}],
@@ -90,6 +90,9 @@ def build_repository(root: Path) -> None:
         "---\nname: repository-memory\ndescription: 経験知を扱う。\n---\n",
     )
     write(root, ".codex/config.toml", "")
+    write(root, ".codex/hooks/pretool_guard.py", "")
+    write(root, ".codex/hooks/guard_rules.json", '{"protected_paths":["external/repos"]}')
+    write(root, ".codex/hooks.json", json.dumps({"hooks": {"PreToolUse": [{"matcher": "Bash|apply_patch", "hooks": [{"type": "command", "command": 'python "$root/.codex/hooks/pretool_guard.py"', "commandWindows": "python (Join-Path $root '.codex/hooks/pretool_guard.py')", "timeout": 10}]}]}}))
     write(root, "CLAUDE.md", "@AGENTS.md\n")
     write(root, ".claude/agents/investigate.md", AGENT_TEXT)
     write(root, f".claude/skills/{SKILL}/SKILL.md", WRAPPER_TEXT)
@@ -97,7 +100,7 @@ def build_repository(root: Path) -> None:
     write(root, ".claude/hooks/subagent_history.py", "")
     write(root, ".claude/hooks/compact_plus.py", "")
     write(root, ".claude/hooks/pretool_guard.py", GUARD_SOURCE)
-    write(root, ".claude/hooks/guard_rules.json", '{"rules": []}')
+    write(root, ".claude/hooks/guard_rules.json", '{"rules": [], "protected_paths":["external/repos"]}')
 
 
 class EnvironmentStructureTests(unittest.TestCase):
@@ -326,6 +329,67 @@ class EnvironmentStructureTests(unittest.TestCase):
                 config_path.write_text(f"{head}{fragment}\n\n[checks]{tail}", encoding="utf-8")
                 with self.assertRaises(harness.HarnessError):
                     harness.load_config(root)
+
+    def test_external_guard_missing_or_duplicate_registration(self) -> None:
+        for environment in ("codex", "claude"):
+            path = f".{environment}/" + ("hooks.json" if environment == "codex" else "settings.json")
+            original = json.loads((self.root / path).read_text(encoding="utf-8"))
+            for duplicate in (False, True):
+                data = copy.deepcopy(original)
+                groups = data["hooks"]["PreToolUse"]
+                data["hooks"]["PreToolUse"] = groups * 2 if duplicate else []
+                write(self.root, path, json.dumps(data))
+                self.assertProblem(f"{environment} external guard: expected one", [environment])
+            write(self.root, path, json.dumps(original))
+
+    def test_external_guard_async_matcher_timeout_and_launch(self) -> None:
+        for environment in ("codex", "claude"):
+            path = f".{environment}/" + ("hooks.json" if environment == "codex" else "settings.json")
+            original = json.loads((self.root / path).read_text(encoding="utf-8"))
+            for key, value in (("async", True), ("asyncRewake", True), ("timeout", 11), ("type", "prompt"), ("command", "python other.py")):
+                with self.subTest(environment=environment, key=key):
+                    data = copy.deepcopy(original)
+                    data["hooks"]["PreToolUse"][0]["hooks"][0][key] = value
+                    write(self.root, path, json.dumps(data))
+                    self.assertProblem(f"{environment} external guard:", [environment])
+            data = copy.deepcopy(original)
+            data["hooks"]["PreToolUse"][0]["matcher"] = "Bash"
+            write(self.root, path, json.dumps(data))
+            self.assertProblem(f"{environment} external guard: incorrect", [environment])
+            if environment == "codex":
+                data = copy.deepcopy(original)
+                del data["hooks"]["PreToolUse"][0]["hooks"][0]["commandWindows"]
+                write(self.root, path, json.dumps(data))
+                self.assertProblem("commandWindows must launch", [environment])
+            write(self.root, path, json.dumps(original))
+
+    def test_external_guard_rules_and_required_files_are_environment_scoped(self) -> None:
+        for environment in ("codex", "claude"):
+            other = "claude" if environment == "codex" else "codex"
+            path = f".{environment}/hooks/guard_rules.json"
+            original = (self.root / path).read_text(encoding="utf-8")
+            for paths in ([], ["external/repos", "../outside"], ["external/repos", "C:/outside"], ["external/repos", "/outside"], ["external/repos", None], ["external/repos/"], "external/repos"):
+                write(self.root, path, json.dumps({"rules": [], "protected_paths": paths}))
+                self.assertProblem(f"{environment} external guard: invalid", [environment])
+                self.assertEqual([], self.problems([other]))
+            write(self.root, path, original)
+            for filename in ("guard_rules.json", "pretool_guard.py"):
+                target = self.root / f".{environment}/hooks/{filename}"
+                contents = target.read_text(encoding="utf-8")
+                target.unlink()
+                self.assertProblem(f"{environment} external guard: missing", [environment])
+                self.assertEqual([], self.problems([other]))
+                write(self.root, f".{environment}/hooks/{filename}", contents)
+
+    def test_external_guard_claude_deny_and_rule_entries(self) -> None:
+        settings = copy.deepcopy(SETTINGS)
+        settings["permissions"]["deny"] = []
+        self.write_settings(settings)
+        self.assertProblem("missing Edit(/external/repos/**)", ["claude"])
+        self.write_settings(SETTINGS)
+        for rules in ({}, [None], [{"pattern": [], "decision": "prompt"}], [{"pattern": ["git"], "decision": "allow"}], [{"pattern": [1], "decision": "prompt"}]):
+            write(self.root, ".claude/hooks/guard_rules.json", json.dumps({"protected_paths": ["external/repos"], "rules": rules}))
+            self.assertProblem("claude external guard: invalid", ["claude"])
 
 
 if __name__ == "__main__":

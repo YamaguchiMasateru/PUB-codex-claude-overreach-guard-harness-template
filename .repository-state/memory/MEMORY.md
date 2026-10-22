@@ -19,5 +19,7 @@
 - Claude の `.env` 読み取り拒否は有効だが、エラー文はディレクトリ単位の表現になる。文面だけで書式を再調査しない。[詳細](lessons/claude-env-deny-message.md)
 - `claude -p --json-schema` は `$schema` キーを拒否する。Codex 用スキーマを流用せず外す。[詳細](lessons/claude-p-json-schema.md)
 - Git Bash から `claude -p "/compact"` を渡すときは `MSYS_NO_PATHCONV=1` が要る。祖先探索の通しテストは入れ子の MSYS シェルでなくネイティブな親から行う。[詳細](lessons/windows-git-bash-claude-testing.md)
-- Hook のルートは `CLAUDE_PROJECT_DIR` で決める（`git rev-parse` だけだと、cd した別リポジトリを指して全 Hook が止まる）。別リポジトリは `cd` せず絶対パスか `git -C`。[詳細](lessons/hook-root-from-cwd.md)
+- ClaudeのPreToolUseは `CLAUDE_PROJECT_DIR` 候補にHookがなければGit rootへfallbackし、選択rootを子へ渡す。Windowsではevent cwdの祖先とrootの実体一致を確認して字句的表記を揃え、短縮cwd・長いroot混在のnested起動で実機denyを確認した。書込み先のjunctionは物理解決しない。Codexは文書化済みの相当変数が未確認だが、`-C <repo>` で起動rootの前提を固定できる。実機Hook入力・denyはpolicy阻止で未確認。[詳細](lessons/hook-root-from-cwd.md)
+- 外部Git登録先は `--show-toplevel` と登録先の実体一致を確認する。Git成功だけでは非Git子dirが親HEADを拾う。[詳細](lessons/external-git-root.md)
+- 読取り系Gitでも `--output` は書込みになる。引用符・`-C`・xcopy/robocopyの宛先文法を検証し、単体成功と実機Hook確認を分ける。[詳細](lessons/shell-guard-output-destinations.md)
 - ツールを制限した要約子には親Hookで取得したGit情報を明示入力し、対象repoと取得不能時の扱いを指定する。mockの成功は実LLM品質を証明しない。[詳細](lessons/compact-summary-repository-facts.md)

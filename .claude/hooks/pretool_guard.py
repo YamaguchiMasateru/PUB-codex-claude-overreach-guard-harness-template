@@ -8,6 +8,8 @@ This supplements the role definitions; it is not a security boundary (see
 from __future__ import annotations
 
 import json
+import os
+import posixpath
 import re
 import sys
 from pathlib import Path
@@ -423,6 +425,374 @@ def match_rules(rules: list[dict], command: str) -> dict | None:
     return best
 
 
+# --- Protected paths: no writes to read-only links (external/repos holds junctions to other repositories) ---
+# The Edit permission rule stops file-editing tools, but not shell redirects, rm, mv or git writes (observed 2026-10-21).
+# This check is a guard against mistakes, not a security boundary: indirect writes (a script that writes by itself, xargs/find -exec,
+# variables or computed paths, eval) are not detected.
+PROTECTED_DEFAULT = ("external/repos",)
+SHELL_TOOLS = ("Bash", "PowerShell")
+PROTECTED_REASON = ("Writing under {path} is not allowed: it holds read-only links to external repositories. "
+                    "If it is really needed, ask the user to perform the write in their own terminal.")
+WRITE_ANY = {"rm", "mv", "rmdir", "mkdir", "touch", "ln", "chmod", "chown", "truncate", "dd", "tee", "patch", "unlink", "shred", "install",
+             "del", "erase", "rd", "ri", "remove-item", "move-item", "mi", "set-content", "sc", "add-content", "ac", "out-file",
+             "new-item", "ni", "clear-content", "clc", "rename-item", "rni", "set-item", "si", "remove-itemproperty",
+             "mklink", "attrib", "icacls", "takeown", "set-itemproperty", "sp"}
+WRITE_DEST = {"cp", "rsync", "copy-item", "copy", "cpi", "xcopy", "robocopy", "install", "compress-archive"}  # the last positional argument is the destination
+WINDOWS_SWITCH = re.compile(r"^/[A-Za-z?]{1,8}(?:[:=].*)?$")  # xcopy/robocopy switches such as /E /MIR /XD:dir
+GIT_WRITE = {"add", "commit", "checkout", "switch", "reset", "clean", "rm", "mv", "restore", "merge", "rebase", "push", "pull", "fetch",
+             "apply", "am", "cherry-pick", "revert", "gc", "prune", "init", "clone", "update-index", "update-ref", "symbolic-ref",
+             "filter-branch", "replace", "maintenance", "repack", "pack-refs", "write-tree", "commit-tree", "mktag"}
+GIT_AMBIGUOUS_WRITE = {"remote": {"add", "remove", "rm", "rename", "set-url", "set-head", "set-branches", "prune", "update"},
+                       "worktree": {"add", "remove", "move", "prune", "lock", "unlock", "repair"},
+                       "submodule": {"add", "update", "init", "sync", "deinit", "foreach", "set-url", "set-branch", "absorbgitdirs"},
+                       "notes": {"add", "append", "copy", "edit", "merge", "prune", "remove"},
+                       "reflog": {"expire", "delete"}}
+GIT_STASH_READ = {"list", "show"}
+GIT_VALUE_OPTIONS = {"-C", "-c", "--git-dir", "--work-tree", "--namespace", "--exec-path", "--super-prefix", "--config-env"}
+CD_COMMANDS = {"cd", "pushd", "set-location", "sl", "chdir"}
+SHELL_WRAPPERS = {"bash", "sh", "zsh", "powershell", "pwsh"}
+WRAPPER_FLAG = re.compile(r"^(?:-[A-Za-z]*c|-command)$", re.I)  # -c, -lc, -Command
+# keywords and wrappers that precede the real command word
+PREFIX_WORDS = {"do", "then", "else", "elif", "if", "while", "until", "time", "nohup", "nice", "ionice", "exec", "command", "sudo", "env",
+                "call", "builtin", "stdbuf", "setsid", "timeout", "busybox", "xargs"}
+PREFIX_VALUE_OPTIONS = {"sudo": {"-u", "-g", "-C"}, "nice": {"-n"}, "ionice": {"-c", "-n"}, "stdbuf": set(),
+                        "xargs": {"-a", "-d", "-E", "-I", "-L", "-n", "-P", "-s"}}
+# commands that write to the path given as the value of an output option
+OUTPUT_OPTIONS = {"curl": {"-o", "--output", "--output-dir"}, "wget": {"-o", "-O", "-P", "--output-document", "--directory-prefix", "--output-file"},
+                  "tar": {"-C", "--directory"}, "unzip": {"-d"}, "7z": {"-o"}, "invoke-webrequest": {"-outfile"}, "iwr": {"-outfile"},
+                  "invoke-restmethod": {"-outfile"}, "irm": {"-outfile"}, "expand-archive": {"-destinationpath"},
+                  "tee-object": {"-filepath"}, "export-csv": {"-path"}, "out-string": set()}
+COMMENT_START = re.compile(r"(?<![^\s])#")
+SUBSTITUTION = re.compile(r"\$\(([^()]*)\)|`([^`]*)`")
+REDIRECT_TARGET = re.compile(r"(?<![\w<])(?:\d*>>?|&>>?)[ \t]*(?!&)(?:\"([^\"]*)\"|'([^']*)'|([^\s;&|<>]+))")
+REDIRECT_IGNORED = {"/dev/null", "nul", "$null", "/dev/stderr", "/dev/stdout"}
+HEREDOC = re.compile(r"<<-?[ \t]*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\1")
+GIT_BRANCH_LIST = {"--list", "-l", "-a", "-r", "-v", "-vv", "--show-current", "--all", "--remotes", "--contains", "--merged", "--no-merged"}
+GIT_BRANCH_WRITE = {"-d", "-D", "-m", "-M", "-c", "-C", "--delete", "--move", "--copy", "--force", "-f", "--set-upstream-to", "-u",
+                    "--unset-upstream", "--edit-description"}
+GIT_TAG_LIST = {"-l", "--list", "--contains", "--points-at", "-n", "--merged", "--no-merged"}
+GIT_TAG_WRITE = {"-d", "--delete", "-f", "--force", "-a", "-s", "-m"}
+GIT_CONFIG_READ = {"--get", "--get-all", "--get-regexp", "--list", "-l", "--show-origin", "--get-urlmatch"}
+GIT_CONFIG_WRITE = {"--unset", "--unset-all", "--add", "--replace-all", "--edit", "-e", "--rename-section", "--remove-section"}
+
+
+def load_protected_paths(path: Path = RULES_FILE) -> tuple[str, ...]:
+    """Protected path prefixes from the rules file ("protected_paths"); the default when absent or broken."""
+    try:
+        values = json.loads(path.read_text(encoding="utf-8-sig")).get("protected_paths")
+    except (OSError, ValueError, AttributeError):
+        return PROTECTED_DEFAULT
+    if isinstance(values, list) and values and all(
+            isinstance(v, str) and v.strip().strip("/\\") and v.strip() not in (".", "..")
+            for v in values):
+        return tuple(v.strip().replace("\\", "/").rstrip("/") for v in values)
+    return PROTECTED_DEFAULT
+
+
+def _strip_heredocs(command: str) -> str:
+    """Drop heredoc bodies (they are data, not commands); the line that starts the heredoc is kept."""
+    lines, out, terminator = command.split("\n"), [], None
+    for line in lines:
+        if terminator is not None:
+            if line.strip() == terminator:
+                terminator = None
+            continue
+        out.append(line)
+        match = HEREDOC.search(line)
+        if match and "<<<" not in line:
+            terminator = match.group(2)
+    return "\n".join(out)
+
+
+def _mask_quoted_arrows(command: str) -> str:
+    """Hide > inside quotes (messages such as "a -> b") so they are not read as redirects; quotes and everything else stay."""
+    out, quote = [], ""
+    for ch in command:
+        if quote:
+            out.append("\x01" if ch == ">" else ch)
+            if ch == quote:
+                quote = ""
+        else:
+            if ch in "'\"":
+                quote = ch
+            out.append(ch)
+    return "".join(out)
+
+
+def _strip_comments(command: str) -> str:
+    """Drop unquoted # comments (a # at the start of a word, up to the end of the line)."""
+    out, quote, skipping, prev = [], "", False, "\n"
+    for ch in command:
+        if skipping:
+            if ch == "\n":
+                skipping = False
+                out.append(ch)
+        else:
+            if quote:
+                if ch == quote:
+                    quote = ""
+            elif ch in "'\"":
+                quote = ch
+            elif ch == "#" and prev in " \t\n":
+                skipping = True
+                prev = ch
+                continue
+            out.append(ch)
+        prev = ch
+    return "".join(out)
+
+
+def _normalize_redirects(command: str) -> str:
+    """>| and >&file are redirects to a file: rewrite them to > so the statement splitter does not cut them at | or &."""
+    command = command.replace(">|", ">")
+    return re.sub(r"(\d*)>&(?![\d-])", r"\1>", command)
+
+
+def _statements(command: str) -> list[str]:
+    """Split on unquoted ; | & and newlines (quote-aware; backslashes are kept because PowerShell paths use them)."""
+    out, buf, quote, escaped = [], [], "", False
+    for ch in command:
+        if escaped:
+            buf.append(ch)
+            escaped = False
+        elif quote:
+            buf.append(ch)
+            if ch == quote:
+                quote = ""
+        elif ch == "\\":
+            buf.append(ch)
+            escaped = True  # an escaped quote or separator outside quotes does not open a quote or end a statement
+        elif ch in "'\"":
+            quote = ch
+            buf.append(ch)
+        elif ch in ";\n|&":
+            out.append("".join(buf))
+            buf = []
+        else:
+            buf.append(ch)
+    out.append("".join(buf))
+    return [s.strip() for s in out if s.strip()]
+
+
+def _tokens(statement: str) -> list[str]:
+    return [tok[1:-1] if len(tok) >= 2 and tok[0] == tok[-1] and tok[0] in "'\"" else tok
+            for tok in re.findall(r"\"[^\"]*\"|'[^']*'|\S+", statement)]
+
+
+def _command_word(tokens: list[str]) -> tuple[str, list[str]]:
+    """Return the lower-cased command name and its arguments, skipping VAR=value, wrappers (sudo, time, ...) and keywords (do, then, ...)."""
+    i = 0
+    while i < len(tokens):
+        word = re.sub(r"^(?:\$\(|[({!`])+", "", tokens[i])
+        lower = word.lower()
+        if not word:
+            i += 1
+        elif ASSIGNMENT.match(word) or lower in PREFIX_WORDS:
+            i += 1
+            values = PREFIX_VALUE_OPTIONS.get(lower, set())
+            while lower != "env" and i < len(tokens) and tokens[i].startswith("-") or (lower == "env" and i < len(tokens) and tokens[i].startswith("-")):
+                i += 2 if tokens[i] in values else 1
+            if lower == "timeout" and i < len(tokens) and re.match(r"^\d", tokens[i]):
+                i += 1
+        else:
+            break
+    if i >= len(tokens):
+        return "", []
+    name = re.sub(r"^(?:\$\(|[({!`])+", "", tokens[i]).replace("\\", "/").rsplit("/", 1)[-1].lower()
+    if name.endswith(".exe"):
+        name = name[:-4]
+    return name, tokens[i + 1:]
+
+
+def _is_absolute(path: str) -> bool:
+    return path.startswith(("/", "~", "$")) or bool(re.match(r"^[A-Za-z]:[/\\]", path))
+
+
+def _git_write(args: list[str]) -> bool:
+    """True when the git invocation (arguments after "git") is a write subcommand."""
+    i = 0
+    while i < len(args) and args[i].startswith("-"):
+        i += 2 if args[i] in GIT_VALUE_OPTIONS else 1  # the --git-dir=<path> form is a single token
+    if i >= len(args):
+        return False
+    sub, rest = args[i], args[i + 1:]
+    flags = set(rest)
+    positional = [a for a in rest if not a.startswith("-")]
+    if sub in GIT_WRITE:
+        return True
+    if sub in GIT_AMBIGUOUS_WRITE:
+        return any(a in GIT_AMBIGUOUS_WRITE[sub] for a in rest)
+    if sub == "stash":
+        return not positional or positional[0] not in GIT_STASH_READ
+    if sub == "branch":
+        return bool(flags & GIT_BRANCH_WRITE) or (bool(positional) and not flags & GIT_BRANCH_LIST)
+    if sub == "tag":
+        return bool(flags & GIT_TAG_WRITE) or (bool(positional) and not flags & GIT_TAG_LIST)
+    if sub == "config":
+        return bool(flags & GIT_CONFIG_WRITE) or (len(positional) >= 2 and not flags & GIT_CONFIG_READ)
+    return False
+
+
+def _values(args: list[str]) -> list[str]:
+    """Non-option arguments plus the values of option=value, -Option:value and -t <dir> forms (candidate paths)."""
+    out, i = [], 0
+    while i < len(args):
+        a = args[i]
+        if a in ("-t", "--target-directory") and i + 1 < len(args):
+            out.append(args[i + 1])
+            i += 2
+            continue
+        if a.startswith("--") and "=" in a:
+            out.append(a.split("=", 1)[1])
+        elif a.startswith("-") and ":" in a[1:]:
+            out.append(a.split(":", 1)[1])
+        elif not a.startswith("-"):
+            out.append(a)
+        i += 1
+    return out
+
+
+def _lexical_path(value: str, cwd: str = "") -> str:
+    """Normalize without resolving junctions or accessing another repository."""
+    value = value.replace(chr(92), "/")
+    cwd = cwd.replace(chr(92), "/")
+    value = re.sub(r"^/([A-Za-z])(?=/)", r"\1:", value)
+    if not (value.startswith("/") or re.match(r"^[A-Za-z]:/", value)):
+        value = cwd.rstrip("/") + "/" + value
+    return posixpath.normpath(value).rstrip("/").lower()
+
+
+def _project_spelling(project: str, cwd: str) -> str:
+    """Match only project-root identity, preserving the operation cwd's lexical spelling.
+
+    Windows may supply an 8.3 cwd while git reports a long project path. Do not
+    resolve write targets or descendants through external repository junctions.
+    """
+    if os.name != "nt":
+        return project
+    operation = Path(cwd)
+    project_depth = len(Path(project).parts)
+    for ancestor in (operation, *operation.parents):
+        if len(ancestor.parts) > project_depth:
+            continue
+        try:
+            if os.path.samefile(ancestor, project):
+                return str(ancestor)
+        except (OSError, ValueError):
+            continue
+    return project
+
+
+def protected_write_reason(tool: str, command: str, protected: tuple[str, ...] | None = None, _depth: int = 0, cwd: str | None = None) -> str | None:
+    """Return a deny reason when a Bash/PowerShell command writes under a protected path, else None."""
+    if tool not in SHELL_TOOLS or not isinstance(command, str) or _depth > 3:
+        return None
+    paths = PROTECTED_DEFAULT if protected is None else protected
+    current = _lexical_path(cwd or str(Path.cwd()))
+    project = os.environ.get("CLAUDE_PROJECT_DIR") or str(Path(__file__).absolute().parents[2])
+    project = _project_spelling(project, current)
+    roots = [_lexical_path(p, project) for p in paths]
+
+    def mentions(value: str) -> bool:
+        candidate = _lexical_path(value, current)
+        return any(candidate == root or candidate.startswith(root + "/") for root in roots)
+
+    def hit(value: str) -> bool:
+        return bool(value) and not value.startswith("-") and mentions(value)
+
+    text = _normalize_redirects(_mask_quoted_arrows(_strip_comments(_strip_heredocs(command))))
+    for sub_match in SUBSTITUTION.finditer(text):  # $(...) and `...` run commands too
+        inner = sub_match.group(1) or sub_match.group(2) or ""
+        found = protected_write_reason(tool, inner, paths, _depth + 1, cwd=current) if inner.strip() else None
+        if found:
+            return found
+    for statement in _statements(text):  # in order: a cd changes where relative paths point for the statements after it
+        tokens = _tokens(statement)
+        name, args = _command_word(tokens)
+        for match in REDIRECT_TARGET.finditer(statement):
+            target = match.group(1) or match.group(2) or match.group(3) or ""
+            if target.lower() not in REDIRECT_IGNORED and hit(target):
+                return PROTECTED_REASON.format(path=paths[0])
+        if name in CD_COMMANDS:
+            targets = [a for a in args if not a.startswith("-")]
+            if targets:
+                current = _lexical_path(targets[0], current)
+            continue
+        if name in SHELL_WRAPPERS or name == "cmd":
+            inner = ""
+            if name == "cmd" and len(args) >= 2 and args[0].lower() in ("/c", "/k"):
+                inner = " ".join(args[1:])
+            else:
+                flag = next((k for k, a in enumerate(args) if WRAPPER_FLAG.match(a)), None)
+                if flag is not None:
+                    inner = " ".join(args[flag + 1:])
+                else:
+                    inner = " ".join(a for a in args if re.search(r"[\s;&|]", a))
+            inner = inner.replace("", ">")  # the quoted text is the real command: restore the > hidden by _mask_quoted_arrows
+            found = protected_write_reason(tool, inner, paths, _depth + 1, cwd=current) if inner else None
+            if found:
+                return found
+            continue
+        values = _values(args)
+        if name in ("xcopy", "robocopy"):
+            values = [v for v in values if not WINDOWS_SWITCH.match(v)]
+        bad = False
+        if name in WRITE_ANY:
+            bad = any(hit(v) for v in values) or any(a.startswith("of=") and hit(a[3:]) for a in args)
+        elif name == "sed" and any(a == "--in-place" or (a.startswith("-") and not a.startswith("--") and "i" in a[1:]) for a in args):
+            bad = any(hit(v) for v in values)
+        elif name in ("xcopy", "robocopy"):
+            # Source and destination precede optional file filters and switches.
+            bad = len(values) >= 2 and hit(values[1])
+        elif name in WRITE_DEST:
+            explicit = [args[k + 1] for k, a in enumerate(args) if a in ("-t", "--target-directory") and k + 1 < len(args)]
+            explicit += [a.split("=", 1)[1] for a in args if a.startswith("--target-directory=")]
+            if explicit:
+                bad = any(hit(d) for d in explicit)
+            elif len(values) >= 2:
+                bad = hit(values[-1])
+        elif name in OUTPUT_OPTIONS:
+            options = OUTPUT_OPTIONS[name]
+            insensitive = name not in ("curl", "wget", "tar", "unzip", "7z")  # PowerShell parameters ignore case
+            for k, a in enumerate(args):
+                key = a.lower() if insensitive else a
+                if key in options and k + 1 < len(args) and hit(args[k + 1]):
+                    bad = True
+                elif "=" in key and key.split("=", 1)[0] in options and hit(a.split("=", 1)[1]):
+                    bad = True
+                elif ":" in key and key.split(":", 1)[0] in options and hit(a.split(":", 1)[1]):
+                    bad = True
+                elif not insensitive and len(a) > 2 and not a.startswith("--") and a[:2] in options and hit(a[2:]):
+                    bad = True  # attached short option such as -ofile or -Cdir
+        elif name == "find" and any(mentions(v) for v in values):
+            bad = any(a in ("-delete", "-fprint", "-fprint0", "-fprintf", "-fls") for a in args) or any(
+                a in ("-exec", "-execdir", "-ok", "-okdir") and k + 1 < len(args) and args[k + 1].replace("\\", "/").rsplit("/", 1)[-1].lower() in WRITE_ANY
+                for k, a in enumerate(args))
+        elif name == "perl" and any(a.startswith("-") and not a.startswith("--") and "i" in a[1:] for a in args):
+            bad = any(hit(v) for v in values)
+        elif name in ("awk", "gawk") and "inplace" in args:
+            bad = any(hit(v) for v in values)
+        elif name == "git":
+            gitcwd, k = current, 0
+            while k < len(args) and args[k].startswith("-"):
+                if args[k] == "-C" and k + 1 < len(args):
+                    gitcwd = _lexical_path(args[k + 1], gitcwd)
+                k += 2 if args[k] in GIT_VALUE_OPTIONS else 1
+            # Read subcommands can write an explicit output file as well.
+            for index, arg in enumerate(args[k + 1:], k + 1):
+                target = args[index + 1] if arg == "--output" and index + 1 < len(args) else arg.split("=", 1)[1] if arg.startswith("--output=") else None
+                if target is not None:
+                    if target[:1] in ("'", '"') and target[-1:] == target[:1]:
+                        target = target[1:-1]
+                    candidate = _lexical_path(target, gitcwd)
+                    bad |= any(candidate == root or candidate.startswith(root + "/") for root in roots)
+            if _git_write(args):
+                bad |= mentions(gitcwd) or any(mentions(a) for a in args)
+        if bad:
+            return PROTECTED_REASON.format(path=paths[0])
+    return None
+
+
 def output(decision: str, reason: str) -> dict:
     return {"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": decision,
                                    "permissionDecisionReason": reason}}
@@ -439,6 +809,16 @@ def decide(event: dict, rules: list[dict] | None = None) -> dict | None:
             return output("deny", f"{reason}. {REASON_SUFFIX}")
     tool_input = event.get("tool_input")
     command = tool_input.get("command") if isinstance(tool_input, dict) else None
+    if event.get("tool_name") in SHELL_TOOLS and isinstance(command, str):
+        try:
+            cwd = event.get("cwd")
+            reason = protected_write_reason(event["tool_name"], command, load_protected_paths(),
+                                            cwd=cwd if isinstance(cwd, str) and cwd else None)
+        except Exception as exc:
+            print(f"pretool_guard: protected-path check failed, not applied: {type(exc).__name__}", file=sys.stderr)
+            reason = None
+        if reason:
+            return output("deny", reason)
     if event.get("tool_name") == "Bash" and isinstance(command, str):
         rule = match_rules(load_rules() if rules is None else rules, command)
         if rule:

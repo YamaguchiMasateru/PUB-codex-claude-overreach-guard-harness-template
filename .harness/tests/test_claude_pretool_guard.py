@@ -217,9 +217,112 @@ class RuleTests(unittest.TestCase):
             self.assertEqual(len(guard.load_rules(path)), 1)
 
 
+class ProtectedPathTests(unittest.TestCase):
+    def test_quoted_git_output(self):
+        for role in (None, 'implement'):
+            for command in ('git diff --output="external/repos/vendor/out.patch"',
+                            "git diff --output='external/repos/vendor/out.patch'",
+                            'git -C external/repos/vendor diff --output="out.patch"'):
+                with self.subTest(role=role, command=command):
+                    event = bash_event(command, role)
+                    event['cwd'] = str(ROOT)
+                    self.assertEqual(decision(guard.decide(event, [])), 'deny')
+
+    def test_output_and_windows_copy_destinations(self):
+        for role in (None, 'implement'):
+            for command in ('git diff --output=external/repos/vendor/out.patch',
+                            'git diff --output external/repos/vendor/out.patch',
+                            'git -C external/repos/vendor diff --output=out.patch',
+                            'git -C external/repos/vendor diff --output out.patch',
+                            'git -C external -C repos/vendor diff --output=out.patch',
+                            'robocopy safe external/repos/vendor /MIR',
+                            'xcopy safe external/repos/vendor /E /Y',
+                            'robocopy safe external/repos/vendor *.txt'):
+                with self.subTest(role=role, command=command):
+                    event = bash_event(command, role)
+                    event['cwd'] = str(ROOT)
+                    self.assertEqual(decision(guard.decide(event, [])), 'deny')
+            for command in ('git -C external/repos/vendor status',
+                            'robocopy safe output *.txt /MIR', 'xcopy safe output /E /Y',
+                            'robocopy external/repos/vendor output *.txt'):
+                with self.subTest(role=role, command=command):
+                    event = bash_event(command, role)
+                    event['cwd'] = str(ROOT)
+                    self.assertIsNone(guard.decide(event, []))
+
+    def test_operation_cwd_and_sequential_cd(self):
+        protected = ROOT / 'external/repos/vendor'
+        cases = [
+            ('rm victim', protected, 'deny'),
+            ('cd external; cd repos; cd vendor; rm victim', ROOT, 'deny'),
+            ('cd external/repos/vendor; cd ../../..; rm victim', ROOT, None),
+            ('cd ..; rm victim', protected, 'deny'),
+            ('echo hi > victim', protected, 'deny'),
+            ('git status', protected, None),
+            ('git add victim', protected, 'deny'),
+            ('rm external/repos/../safe', ROOT, None),
+            ('echo "rm external/repos/vendor/victim"', ROOT, None),
+            ('echo ok # rm external/repos/vendor/victim', ROOT, None),
+            ("cat <<'EOF'\nrm external/repos/vendor/victim\nEOF", ROOT, None),
+            ('bash -c "rm victim"', protected, 'deny'),
+        ]
+        for command, cwd, expected in cases:
+            with self.subTest(command=command, cwd=cwd):
+                event = bash_event(command, None)
+                event['cwd'] = str(cwd)
+                self.assertEqual(decision(guard.decide(event, [])), expected)
+        self.assertIsNotNone(guard.protected_write_reason(
+            'PowerShell', r'Remove-Item C:\fixture\external\repos\vendor\victim',
+            ('C:/fixture/external/repos',), cwd='C:/elsewhere'))
+        for command in ('git -C C:/fixture/external/repos/vendor diff --output out.patch',
+                        'robocopy safe C:/fixture/external/repos/vendor *.txt /MIR',
+                        'xcopy safe C:/fixture/external/repos/vendor /E /Y'):
+            with self.subTest(command=command):
+                self.assertIsNotNone(guard.protected_write_reason(
+                    'PowerShell', command, ('C:/fixture/external/repos',), cwd='C:/elsewhere'))
+
+    def test_protected_failure_keeps_read_only_deny_and_rules(self):
+        from unittest.mock import patch
+        import contextlib
+        import io
+        rule = {'pattern': ['git', 'push'], 'decision': 'forbidden'}
+        with patch.object(guard, 'protected_write_reason', side_effect=RuntimeError('fixture')):
+            with contextlib.redirect_stderr(io.StringIO()) as warnings:
+                self.assertEqual(decision(guard.decide(bash_event('rm victim'), [])), 'deny')
+                self.assertIsNone(guard.decide(bash_event('rm victim', None), []))
+                self.assertEqual(decision(guard.decide(bash_event('git push', None), [rule])), 'deny')
+            self.assertIn('protected-path check failed', warnings.getvalue())
+
+    def test_project_root_preserves_runtime_short_path_spelling(self):
+        from unittest.mock import patch
+        project = 'C:/Users/M_YAMA~1/Temp/fixture'
+        with patch.dict(os.environ, {'CLAUDE_PROJECT_DIR': project}):
+            self.assertIsNotNone(guard.protected_write_reason(
+                'Bash', 'touch external/repos/probe', cwd=project))
+            self.assertIsNotNone(guard.protected_write_reason(
+                'Bash', 'rm victim', cwd=project + '/external/repos/vendor'))
+            self.assertIsNone(guard.protected_write_reason(
+                'Bash', 'cd ../../..; touch probe', cwd=project + '/external/repos/vendor'))
+
+    def test_invalid_protected_config_uses_default(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / 'rules.json'
+            for payload in ('broken', '[]', '{}', '{"protected_paths":[]}', '{"protected_paths":[5]}'):
+                path.write_text(payload, encoding='utf-8')
+                self.assertEqual(guard.load_protected_paths(path), ('external/repos',))
+
+
 class ProcessTests(unittest.TestCase):
     def run_hook(self, payload):
         return subprocess.run([sys.executable, '-X', 'utf8', str(SCRIPT)], input=payload, capture_output=True)
+
+    def test_protected_cwd_through_stdin(self):
+        for role in (None, 'implement', 'verify', 'investigate', 'review'):
+            event = bash_event('rm victim', role)
+            event['cwd'] = str(ROOT / 'external/repos/fixture')
+            result = self.run_hook(json.dumps(event).encode('utf-8'))
+            self.assertEqual(result.returncode, 0)
+            self.assertEqual(decision(json.loads(result.stdout)), 'deny')
 
     def test_output_contract(self):
         result = self.run_hook(json.dumps(bash_event('echo hi > x.txt')).encode('utf-8'))
@@ -250,6 +353,37 @@ class ProcessTests(unittest.TestCase):
             result = self.run_hook(payload)
             self.assertEqual((result.returncode, result.stdout), (0, b''), payload)
             self.assertTrue(result.stderr.decode().startswith('pretool_guard:'), payload)
+
+    def test_configured_command_falls_back_when_project_dir_has_no_hook(self):
+        bash = find_bash()
+        if not bash or not shutil.which('uv') or not shutil.which('git'):
+            self.skipTest('bash, uv and git required')
+        with tempfile.TemporaryDirectory() as temp:
+            project = Path(temp) / 'repo with space'
+            hooks = project / '.claude/hooks'
+            hooks.mkdir(parents=True)
+            for name in ('pretool_guard.py', 'guard_rules.json'):
+                shutil.copy2(ROOT / '.claude/hooks' / name, hooks / name)
+            for name in ('pyproject.toml', 'uv.lock'):
+                shutil.copy2(ROOT / name, project / name)
+            subprocess.run(['git', 'init', '-q', str(project)], check=True)
+            nested = project / 'nested'
+            nested.mkdir()
+            hook = json.loads(SETTINGS.read_text(encoding='utf-8'))['hooks']['PreToolUse'][0]['hooks'][0]
+            event = bash_event('touch ../external/repos/fixture/probe.txt', 'implement')
+            event['cwd'] = str(nested)
+            for project_dir in (None, nested, project / 'missing'):
+                with self.subTest(project_dir=project_dir):
+                    env = {**os.environ, 'UV_CACHE_DIR': str(Path(temp) / 'uv-cache'), 'PYTHONUTF8': '1'}
+                    env.pop('CLAUDE_PROJECT_DIR', None)
+                    if project_dir is not None:
+                        env['CLAUDE_PROJECT_DIR'] = str(project_dir)
+                    result = subprocess.run([bash, '-c', hook['command']], cwd=nested,
+                                            input=json.dumps(event).encode(), capture_output=True, env=env)
+                    self.assertEqual(result.returncode, 0, result.stderr.decode(errors='replace'))
+                    self.assertTrue(result.stdout, result.stderr.decode(errors='replace'))
+                    self.assertEqual(decision(json.loads(result.stdout)), 'deny')
+                    self.assertFalse((project / 'external/repos/fixture/probe.txt').exists())
 
     def test_configured_command_from_subdir_and_spaced_root(self):
         bash = find_bash()

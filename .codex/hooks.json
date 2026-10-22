@@ -1,60 +1,94 @@
 {
-  "description": "サブエージェント履歴を案内し、compact-plus で圧縮前状態を保存・復旧します。",
+  "description": "サブエージェント履歴の案内、compact-plus による状態の保存・復旧、external/repos への書込み拒否を行います。",
   "hooks": {
-    "PreCompact": [{
-      "hooks": [{
-        "type": "command",
-        "statusMessage": "圧縮前の履歴と状態を保存",
-        "command": "root=\"$(git rev-parse --show-toplevel)\" && uv run --project \"$root\" --locked --no-sync --offline python -X utf8 \"$root/.codex/hooks/compact_plus.py\" pre-compact",
-        "commandWindows": "$root = (git rev-parse --show-toplevel); if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; uv run --project $root --locked --no-sync --offline python -X utf8 (Join-Path $root '.codex/hooks/compact_plus.py') pre-compact; exit $LASTEXITCODE",
-        "timeout": 180
-      }]
-    }],
-    "PostCompact": [{
-      "hooks": [{
-        "type": "command",
-        "statusMessage": "圧縮後の復旧状態を記録",
-        "command": "root=\"$(git rev-parse --show-toplevel)\" && uv run --project \"$root\" --locked --no-sync --offline python -X utf8 \"$root/.codex/hooks/compact_plus.py\" post-compact",
-        "commandWindows": "$root = (git rev-parse --show-toplevel); if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; uv run --project $root --locked --no-sync --offline python -X utf8 (Join-Path $root '.codex/hooks/compact_plus.py') post-compact; exit $LASTEXITCODE",
-        "timeout": 5
-      }]
-    }],
-    "SessionStart": [{
-      "matcher": "compact",
-      "hooks": [{
-        "type": "command",
-        "statusMessage": "圧縮前の状態を復旧",
-        "command": "root=\"$(git rev-parse --show-toplevel)\" && uv run --project \"$root\" --locked --no-sync --offline python -X utf8 \"$root/.codex/hooks/compact_plus.py\" session-start",
-        "commandWindows": "$root = (git rev-parse --show-toplevel); if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; uv run --project $root --locked --no-sync --offline python -X utf8 (Join-Path $root '.codex/hooks/compact_plus.py') session-start; exit $LASTEXITCODE",
-        "timeout": 5,
-        "additionalContextLimit": 0
-      }]
-    }],
-    "SubagentStop": [{
-      "matcher": "*",
-      "hooks": [{
-        "type": "command",
-        "statusMessage": "サブエージェントの履歴参照先を記録",
-        "command": "root=\"$(git rev-parse --show-toplevel)\" && uv run --project \"$root\" --locked --no-sync --offline python -X utf8 \"$root/.codex/hooks/subagent_history.py\" subagent-stop",
-        "commandWindows": "$root = (git rev-parse --show-toplevel); if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; uv run --project $root --locked --no-sync --offline python -X utf8 (Join-Path $root '.codex/hooks/subagent_history.py') subagent-stop; exit $LASTEXITCODE",
-        "timeout": 10
-      }]
-    }],
-    "UserPromptSubmit": [{
-      "hooks": [{
-        "type": "command",
-        "statusMessage": "圧縮後の状態を補完し使用率を確認",
-        "command": "root=\"$(git rev-parse --show-toplevel)\" && uv run --project \"$root\" --locked --no-sync --offline python -X utf8 \"$root/.codex/hooks/compact_plus.py\" user-prompt-submit",
-        "commandWindows": "$root = (git rev-parse --show-toplevel); if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; uv run --project $root --locked --no-sync --offline python -X utf8 (Join-Path $root '.codex/hooks/compact_plus.py') user-prompt-submit; exit $LASTEXITCODE",
-        "timeout": 5,
-        "additionalContextLimit": 0
-      }, {
-        "type": "command",
-        "statusMessage": "履歴の確認方法を案内",
-        "command": "root=\"$(git rev-parse --show-toplevel)\" && uv run --project \"$root\" --locked --no-sync --offline python -X utf8 \"$root/.codex/hooks/subagent_history.py\" user-prompt-submit",
-        "commandWindows": "$root = (git rev-parse --show-toplevel); if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; uv run --project $root --locked --no-sync --offline python -X utf8 (Join-Path $root '.codex/hooks/subagent_history.py') user-prompt-submit; exit $LASTEXITCODE",
-        "timeout": 10
-      }]
-    }]
+    "PreToolUse": [
+      {
+        "matcher": "Bash|apply_patch",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "root=\"$(git rev-parse --show-toplevel)\" && uv run --project \"$root\" --locked --no-sync --offline python -X utf8 \"$root/.codex/hooks/pretool_guard.py\"",
+            "commandWindows": "$root = (git rev-parse --show-toplevel); if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; uv run --project $root --locked --no-sync --offline python -X utf8 (Join-Path $root '.codex/hooks/pretool_guard.py'); exit $LASTEXITCODE",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "PreCompact": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "statusMessage": "圧縮前の履歴と状態を保存",
+            "command": "root=\"$(git rev-parse --show-toplevel)\" && uv run --project \"$root\" --locked --no-sync --offline python -X utf8 \"$root/.codex/hooks/compact_plus.py\" pre-compact",
+            "commandWindows": "$root = (git rev-parse --show-toplevel); if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; uv run --project $root --locked --no-sync --offline python -X utf8 (Join-Path $root '.codex/hooks/compact_plus.py') pre-compact; exit $LASTEXITCODE",
+            "timeout": 180
+          }
+        ]
+      }
+    ],
+    "PostCompact": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "statusMessage": "圧縮後の復旧状態を記録",
+            "command": "root=\"$(git rev-parse --show-toplevel)\" && uv run --project \"$root\" --locked --no-sync --offline python -X utf8 \"$root/.codex/hooks/compact_plus.py\" post-compact",
+            "commandWindows": "$root = (git rev-parse --show-toplevel); if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; uv run --project $root --locked --no-sync --offline python -X utf8 (Join-Path $root '.codex/hooks/compact_plus.py') post-compact; exit $LASTEXITCODE",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "matcher": "compact",
+        "hooks": [
+          {
+            "type": "command",
+            "statusMessage": "圧縮前の状態を復旧",
+            "command": "root=\"$(git rev-parse --show-toplevel)\" && uv run --project \"$root\" --locked --no-sync --offline python -X utf8 \"$root/.codex/hooks/compact_plus.py\" session-start",
+            "commandWindows": "$root = (git rev-parse --show-toplevel); if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; uv run --project $root --locked --no-sync --offline python -X utf8 (Join-Path $root '.codex/hooks/compact_plus.py') session-start; exit $LASTEXITCODE",
+            "timeout": 5,
+            "additionalContextLimit": 0
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "statusMessage": "サブエージェントの履歴参照先を記録",
+            "command": "root=\"$(git rev-parse --show-toplevel)\" && uv run --project \"$root\" --locked --no-sync --offline python -X utf8 \"$root/.codex/hooks/subagent_history.py\" subagent-stop",
+            "commandWindows": "$root = (git rev-parse --show-toplevel); if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; uv run --project $root --locked --no-sync --offline python -X utf8 (Join-Path $root '.codex/hooks/subagent_history.py') subagent-stop; exit $LASTEXITCODE",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "statusMessage": "圧縮後の状態を補完し使用率を確認",
+            "command": "root=\"$(git rev-parse --show-toplevel)\" && uv run --project \"$root\" --locked --no-sync --offline python -X utf8 \"$root/.codex/hooks/compact_plus.py\" user-prompt-submit",
+            "commandWindows": "$root = (git rev-parse --show-toplevel); if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; uv run --project $root --locked --no-sync --offline python -X utf8 (Join-Path $root '.codex/hooks/compact_plus.py') user-prompt-submit; exit $LASTEXITCODE",
+            "timeout": 5,
+            "additionalContextLimit": 0
+          },
+          {
+            "type": "command",
+            "statusMessage": "履歴の確認方法を案内",
+            "command": "root=\"$(git rev-parse --show-toplevel)\" && uv run --project \"$root\" --locked --no-sync --offline python -X utf8 \"$root/.codex/hooks/subagent_history.py\" user-prompt-submit",
+            "commandWindows": "$root = (git rev-parse --show-toplevel); if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; uv run --project $root --locked --no-sync --offline python -X utf8 (Join-Path $root '.codex/hooks/subagent_history.py') user-prompt-submit; exit $LASTEXITCODE",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
   }
 }

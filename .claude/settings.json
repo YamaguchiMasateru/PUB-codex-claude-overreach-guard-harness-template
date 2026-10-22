@@ -2,7 +2,8 @@
   "permissions": {
     "deny": [
       "Read(**/.env)",
-      "Read(**/.env.*)"
+      "Read(**/.env.*)",
+      "Edit(/external/repos/**)"
     ]
   },
   "hooks": {
@@ -13,7 +14,7 @@
           {
             "type": "command",
             "shell": "bash",
-            "command": "root=\"${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel)}\" && uv run --project \"$root\" --locked --no-sync --offline python -X utf8 \"$root/.claude/hooks/pretool_guard.py\"",
+            "command": "root=\"${CLAUDE_PROJECT_DIR:-}\"; if [ ! -f \"$root/.claude/hooks/pretool_guard.py\" ]; then root=\"$(git rev-parse --show-toplevel)\" || exit; fi; CLAUDE_PROJECT_DIR=\"$root\" uv run --project \"$root\" --locked --no-sync --offline python -X utf8 \"$root/.claude/hooks/pretool_guard.py\"",
             "timeout": 10
           }
         ]

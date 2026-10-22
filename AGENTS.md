@@ -3,6 +3,7 @@
 このリポジトリはチームで共有する、Codex と Claude Code 共通のハーネスです。作業に関係する入口から辿ってください。
 
 - 全体像と操作方法: [README.md](README.md)、[.repository-docs/index.md](.repository-docs/index.md)
+- 詳細構成・配置: [.repository-docs/harness-overview.md](.repository-docs/harness-overview.md)、計画の入口: [specs/README.md](specs/README.md)
 - 調査: `delegate-investigate` Skill（[手順](.agents/skills/delegate-investigate/SKILL.md)）
 - 実装: `delegate-implement` Skill（[手順](.agents/skills/delegate-implement/SKILL.md)）
 - レビュー: `delegate-review` Skill（[手順](.agents/skills/delegate-review/SKILL.md)）

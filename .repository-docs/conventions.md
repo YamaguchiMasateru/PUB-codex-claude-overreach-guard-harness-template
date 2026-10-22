@@ -7,6 +7,8 @@
 - `validate` は構造と参照を、`check` は設定済みコマンドの結果まで確認する。失敗時は要約を見てから保存された生出力を開く。
 - `[structure].markdown_dirs` は既存設定にも必ず追加し、配下の Markdown を再帰的にリンク検査するディレクトリを指定する。空配列なら追加走査しない。`required_files` の Markdown と `skills` が指定する Skill 文書は、この一覧とは別に検査する。導入先の主コンテンツ `docs/` は明示して加えた場合だけ再帰検査する。
 - `.repository-docs/` は現時点で正しい構成と規約、`.repository-state/memory/` は確認済みで将来役立つ事実を扱う。推測、秘密、一時的な出力は記録しない。
+- 計画・タスクは `specs/<計画名>/` に置き、状態は [specs/README.md](../specs/README.md) の手順で更新する。計画上の予定を現行規約や検証済みの成果と混同しない。成果物・外部参照・実行時データの配置は [詳細案内](harness-overview.md#成果物計画外部参照の配置) に従う。
+- 外部リソースの参照は [登録簿の手順](../external/README.md) に従い、リポジトリ相対パスと環境変数名を使う。認証情報、個人情報、ローカル絶対パスを共有登録簿へ入れない。`external/repos/` の実体・junction は共有せず、新しい検索・走査ツールでも除外する。外部リソースの access 記録や Hook はアクセス権を強制する境界ではない。
 - GitHub へ共有する `.repository-docs/`・`.repository-state/memory/`・設定には秘密、個人情報、生ログを含めない。共有対象の判断は [README.md](../README.md) に従う。
 
 - 経験知は [運用手順](operations/repository-knowledge.md) に従い候補と根拠を評価して保存する。サブエージェント履歴の参照は [履歴手順](operations/subagent-history.md) に従う。
